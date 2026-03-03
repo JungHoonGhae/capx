@@ -46,7 +46,7 @@ If this tool helps you, consider supporting its maintenance:
 
 | Requirement | Version/Notes |
 |-------------|---------------|
-| Capacities API Token | [Get from Capacities settings](https://app.capacities.io/settings) |
+| Capacities Desktop App | macOS — logged in (token auto-extracted from cookies) |
 | Rust | >= 1.70 (if building from source) |
 
 ## Installation
@@ -71,8 +71,7 @@ Download from [GitHub Releases](https://github.com/JungHoonGhae/capx/releases).
 ## Quick Start
 
 ```sh
-# Set your API token
-export CAP_TOKEN="your-token-here"
+# Auth is automatic — just have Capacities desktop app logged in
 
 # List your spaces
 capx spaces
