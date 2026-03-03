@@ -1167,7 +1167,8 @@ impl Api {
         // Normalize user properties
         if let Some(user_props) = properties {
             if !user_props.is_empty() {
-                let struct_data = self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
+                let struct_data =
+                    self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
                 let structure = struct_data.components.and_then(|c| c.into_iter().next());
                 let prop_defs: Vec<RawPropertyDefinition> = structure
                     .as_ref()
@@ -1208,7 +1209,8 @@ impl Api {
 
         // Handle bodyMarkdown
         if let Some(body_md) = body_markdown {
-            let struct_data = self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
+            let struct_data =
+                self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
             let structure = struct_data.components.and_then(|c| c.into_iter().next());
             let prop_defs: Vec<RawPropertyDefinition> = structure
                 .as_ref()
