@@ -370,7 +370,8 @@ impl Api {
         for ctx_comp in &context_components {
             // Find the first blocks property to append to
             let prop_defs: Vec<RawPropertyDefinition> = {
-                let struct_data = self.get_content_by_ids(&[ctx_comp.structure_id.clone()])?;
+                let struct_data =
+                    self.get_content_by_ids(std::slice::from_ref(&ctx_comp.structure_id))?;
                 struct_data
                     .components
                     .and_then(|c| c.into_iter().next())
@@ -1166,7 +1167,7 @@ impl Api {
         // Normalize user properties
         if let Some(user_props) = properties {
             if !user_props.is_empty() {
-                let struct_data = self.get_content_by_ids(&[component.structure_id.clone()])?;
+                let struct_data = self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
                 let structure = struct_data.components.and_then(|c| c.into_iter().next());
                 let prop_defs: Vec<RawPropertyDefinition> = structure
                     .as_ref()
@@ -1207,7 +1208,7 @@ impl Api {
 
         // Handle bodyMarkdown
         if let Some(body_md) = body_markdown {
-            let struct_data = self.get_content_by_ids(&[component.structure_id.clone()])?;
+            let struct_data = self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
             let structure = struct_data.components.and_then(|c| c.into_iter().next());
             let prop_defs: Vec<RawPropertyDefinition> = structure
                 .as_ref()

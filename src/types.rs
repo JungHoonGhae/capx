@@ -146,12 +146,14 @@ pub struct SpaceContentResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SyncResponse {
     #[serde(rename = "componentReturnObjects")]
     pub component_return_objects: Option<Vec<SyncReturnObject>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SyncReturnObject {
     pub id: String,
     pub status: String,
@@ -196,11 +198,13 @@ pub struct SpaceObjectElement {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct DuplicateResponse {
     pub id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SaveWeblinkResult {
     #[serde(rename = "spaceId")]
     pub space_id: String,
