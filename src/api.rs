@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -8,7 +8,9 @@ use crate::blocks::{blocks_to_markdown, markdown_to_blocks};
 use crate::types::*;
 
 fn now_iso() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+    chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
 }
 
 const PORTAL_URL: &str = "https://portal.capacities.io";
@@ -304,12 +306,10 @@ impl Api {
 
     /// Resolve context references: UUIDs pass through, non-UUIDs are searched.
     /// Returns resolved entity IDs.
-    pub fn resolve_context_refs(
-        &self,
-        space_id: &str,
-        refs: &[String],
-    ) -> Result<Vec<String>> {
-        let uuid_re = regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$").unwrap();
+    pub fn resolve_context_refs(&self, space_id: &str, refs: &[String]) -> Result<Vec<String>> {
+        let uuid_re =
+            regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+                .unwrap();
         let mut ids = Vec::new();
 
         for r in refs {
@@ -577,7 +577,11 @@ impl Api {
                     .iter()
                     .map(|p| StructureProperty {
                         id: p.id.clone(),
-                        name: p.name.as_ref().map(|n| n.val.clone()).unwrap_or_else(|| p.id.clone()),
+                        name: p
+                            .name
+                            .as_ref()
+                            .map(|n| n.val.clone())
+                            .unwrap_or_else(|| p.id.clone()),
                         data_type: p.data_type.clone(),
                         prop_type: p.prop_type.clone(),
                         is_array: p.is_array,
@@ -586,12 +590,16 @@ impl Api {
                     })
                     .collect();
 
-                let title = c.properties.get("title")
+                let title = c
+                    .properties
+                    .get("title")
                     .and_then(|v| v.get("val"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let plural_name = c.properties.get("pluralName")
+                let plural_name = c
+                    .properties
+                    .get("pluralName")
                     .and_then(|v| v.get("val"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
@@ -617,9 +625,9 @@ impl Api {
     ) -> Result<Option<StructureInfo>> {
         let structures = self.get_structures(space_id)?;
         let lower = type_name.to_lowercase();
-        Ok(structures.into_iter().find(|s| {
-            s.title.to_lowercase() == lower || s.plural_name.to_lowercase() == lower
-        }))
+        Ok(structures
+            .into_iter()
+            .find(|s| s.title.to_lowercase() == lower || s.plural_name.to_lowercase() == lower))
     }
 
     // --- Space objects summary ---
@@ -647,7 +655,9 @@ impl Api {
             let result = self.get_content_by_ids(&ids)?;
             for c in result.components.unwrap_or_default() {
                 if c.comp_type == "RootStructure" {
-                    let title = c.properties.get("title")
+                    let title = c
+                        .properties
+                        .get("title")
                         .and_then(|v| v.get("val"))
                         .and_then(|v| v.as_str())
                         .unwrap_or(&c.id)
@@ -655,11 +665,7 @@ impl Api {
                     structure_name_map.insert(c.id, title);
                 } else if c.comp_type == "RootEntity" {
                     if let Some(elem) = elements.iter().find(|e| e.id == c.id) {
-                        all_entities.push((
-                            c.id,
-                            elem.last_updated.clone(),
-                            c.structure_id,
-                        ));
+                        all_entities.push((c.id, elem.last_updated.clone(), c.structure_id));
                     }
                 }
             }
@@ -678,7 +684,9 @@ impl Api {
             let result = self.get_content_by_ids(&unresolved)?;
             for s in result.components.unwrap_or_default() {
                 if s.comp_type == "RootStructure" {
-                    let title = s.properties.get("title")
+                    let title = s
+                        .properties
+                        .get("title")
                         .and_then(|v| v.get("val"))
                         .and_then(|v| v.as_str())
                         .unwrap_or(&s.id)
@@ -756,13 +764,18 @@ impl Api {
             let struct_data = self.get_content_by_ids(&structure_ids)?;
             for s in struct_data.components.unwrap_or_default() {
                 if s.comp_type == "RootStructure" {
-                    let title = s.properties.get("title")
+                    let title = s
+                        .properties
+                        .get("title")
                         .and_then(|v| v.get("val"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
                     let prop_defs: Vec<RawPropertyDefinition> = serde_json::from_value(
-                        s.data.get("propertyDefinitions").cloned().unwrap_or(json!([])),
+                        s.data
+                            .get("propertyDefinitions")
+                            .cloned()
+                            .unwrap_or(json!([])),
                     )
                     .unwrap_or_default();
                     struct_map.insert(s.id, (title, prop_defs));
@@ -783,7 +796,12 @@ impl Api {
                 }
             }
             // Tags
-            if let Some(tags) = c.properties.get("tags").and_then(|v| v.get("val")).and_then(|v| v.as_array()) {
+            if let Some(tags) = c
+                .properties
+                .get("tags")
+                .and_then(|v| v.get("val"))
+                .and_then(|v| v.as_array())
+            {
                 for t in tags {
                     if let Some(id) = t.as_str() {
                         entity_ref_ids.insert(id.to_string());
@@ -794,12 +812,17 @@ impl Api {
 
         // Bulk resolve entity titles
         let mut entity_title_map: HashMap<String, String> = HashMap::new();
-        let ref_ids: Vec<String> = entity_ref_ids.into_iter().filter(|id| !id.is_empty()).collect();
+        let ref_ids: Vec<String> = entity_ref_ids
+            .into_iter()
+            .filter(|id| !id.is_empty())
+            .collect();
         for chunk in ref_ids.chunks(50) {
             let ids_vec: Vec<String> = chunk.to_vec();
             if let Ok(ref_data) = self.get_content_by_ids(&ids_vec) {
                 for r in ref_data.components.unwrap_or_default() {
-                    let title = r.properties.get("title")
+                    let title = r
+                        .properties
+                        .get("title")
                         .and_then(|v| v.get("val"))
                         .and_then(|v| v.as_str())
                         .unwrap_or(&r.id)
@@ -817,25 +840,36 @@ impl Api {
                 .map(|(t, p)| (Some(t.clone()), p.as_slice()))
                 .unwrap_or((None, &[]));
 
-            let title = c.properties.get("title")
+            let title = c
+                .properties
+                .get("title")
                 .and_then(|v| v.get("val"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let description = c.properties.get("description")
+            let description = c
+                .properties
+                .get("description")
                 .and_then(|v| v.get("val"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .filter(|s| !s.is_empty());
 
             // Resolve tags
-            let tags = c.properties.get("tags")
+            let tags = c
+                .properties
+                .get("tags")
                 .and_then(|v| v.get("val"))
                 .and_then(|v| v.as_array())
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|id| id.as_str())
-                        .map(|id| entity_title_map.get(id).cloned().unwrap_or_else(|| id.to_string()))
+                        .map(|id| {
+                            entity_title_map
+                                .get(id)
+                                .cloned()
+                                .unwrap_or_else(|| id.to_string())
+                        })
                         .collect::<Vec<_>>()
                 });
 
@@ -846,11 +880,18 @@ impl Api {
                 if ["title", "description", "tags"].contains(&def.id.as_str()) {
                     continue;
                 }
-                let name = def.name.as_ref().map(|n| n.val.clone()).unwrap_or_else(|| def.id.clone());
+                let name = def
+                    .name
+                    .as_ref()
+                    .map(|n| n.val.clone())
+                    .unwrap_or_else(|| def.id.clone());
 
                 match def.data_type.as_str() {
                     "blocks" => {
-                        if let Some(block_arr) = blocks.and_then(|b| b.get(&def.id)).and_then(|v| v.as_array()) {
+                        if let Some(block_arr) = blocks
+                            .and_then(|b| b.get(&def.id))
+                            .and_then(|v| v.as_array())
+                        {
                             if !block_arr.is_empty() {
                                 readable_props.insert(name, json!(blocks_to_markdown(block_arr)));
                             }
@@ -860,10 +901,14 @@ impl Api {
                         if let Some(set) = &def.set {
                             let val = c.properties.get(&def.id).and_then(|v| v.get("val"));
                             if let Some(arr) = val.and_then(|v| v.as_array()) {
-                                let resolved: Vec<String> = arr.iter()
+                                let resolved: Vec<String> = arr
+                                    .iter()
                                     .filter_map(|id| id.as_str())
                                     .map(|id| {
-                                        set.iter().find(|o| o.id == id).map(|o| o.text.clone()).unwrap_or_else(|| id.to_string())
+                                        set.iter()
+                                            .find(|o| o.id == id)
+                                            .map(|o| o.text.clone())
+                                            .unwrap_or_else(|| id.to_string())
                                     })
                                     .collect();
                                 if !resolved.is_empty() {
@@ -883,7 +928,7 @@ impl Api {
                     }
                     "datetime" | "string" => {
                         if let Some(val) = c.properties.get(&def.id).and_then(|v| v.get("val")) {
-                            if !val.is_null() && val.as_str().map_or(true, |s| !s.is_empty()) {
+                            if !val.is_null() && val.as_str().is_none_or(|s| !s.is_empty()) {
                                 readable_props.insert(name, val.clone());
                             }
                         }
@@ -934,6 +979,7 @@ impl Api {
 
     // --- Create / Update / Delete ---
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_object(
         &self,
         space_id: &str,
@@ -1137,7 +1183,8 @@ impl Api {
                 for (key, val) in user_props {
                     let (prop_id, prop_def) = resolve_prop_key(key, &prop_defs, &name_to_def);
                     if let Some(def) = prop_def {
-                        let normalized = normalize_property(def, &prop_id, val, &mut normalized_blocks);
+                        let normalized =
+                            normalize_property(def, &prop_id, val, &mut normalized_blocks);
                         for (k, v) in normalized {
                             merged_props[k] = v;
                         }
@@ -1252,11 +1299,7 @@ impl Api {
 
     // --- Helpers ---
 
-    fn find_database_for_type(
-        &self,
-        space_id: &str,
-        type_name: &str,
-    ) -> Result<Option<String>> {
+    fn find_database_for_type(&self, space_id: &str, type_name: &str) -> Result<Option<String>> {
         let space_content = self.get_space_content(space_id)?;
         let elements = space_content.elements.unwrap_or_default();
         if elements.is_empty() {
@@ -1297,9 +1340,7 @@ impl Api {
             let ids: Vec<String> = chunk.iter().map(|e| e.id.clone()).collect();
             let result = self.get_content_by_ids(&ids)?;
             for c in result.components.unwrap_or_default() {
-                if c.structure_id == structure_id
-                    && c.comp_type == "RootEntity"
-                {
+                if c.structure_id == structure_id && c.comp_type == "RootEntity" {
                     if let Some(dbs) = &c.databases {
                         if let Some(first) = dbs.first() {
                             if let Some(db_id) = first.get("id").and_then(|v| v.as_str()) {
@@ -1383,12 +1424,10 @@ fn resolve_prop_key<'a>(
     if is_uuid {
         let def = prop_defs.iter().find(|d| d.id == key);
         (key.to_string(), def)
+    } else if let Some(def) = name_map.get(&key.to_lowercase()) {
+        (def.id.clone(), Some(*def))
     } else {
-        if let Some(def) = name_map.get(&key.to_lowercase()) {
-            (def.id.clone(), Some(*def))
-        } else {
-            (key.to_string(), None)
-        }
+        (key.to_string(), None)
     }
 }
 
@@ -1417,7 +1456,9 @@ fn normalize_property(
             if let Some(set) = &prop_def.set {
                 if let Some(s) = val.as_str() {
                     let lower = s.to_lowercase();
-                    let found = set.iter().find(|o| o.text.to_lowercase() == lower || o.id == s);
+                    let found = set
+                        .iter()
+                        .find(|o| o.text.to_lowercase() == lower || o.id == s);
                     let id = found.map(|o| o.id.clone()).unwrap_or_else(|| s.to_string());
                     result.insert(prop_id.to_string(), json!({ "val": [id] }));
                 } else if let Some(arr) = val.as_array() {
@@ -1434,12 +1475,15 @@ fn normalize_property(
             if let Some(date_str) = val.as_str() {
                 if !date_str.is_empty() {
                     let (start_time, resolution) = parse_date_to_inline(date_str);
-                    result.insert(prop_id.to_string(), json!({
-                        "val": {
-                            "dateResolution": resolution,
-                            "startTime": start_time
-                        }
-                    }));
+                    result.insert(
+                        prop_id.to_string(),
+                        json!({
+                            "val": {
+                                "dateResolution": resolution,
+                                "startTime": start_time
+                            }
+                        }),
+                    );
                 } else {
                     result.insert(prop_id.to_string(), json!({}));
                 }

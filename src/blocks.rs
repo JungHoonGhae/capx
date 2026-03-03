@@ -123,7 +123,14 @@ fn block_to_markdown(block: &Value) -> String {
                     rows.push(row);
                 }
                 let header = format!("| {} |", rows[0].join(" | "));
-                let sep = format!("| {} |", rows[0].iter().map(|_| "---").collect::<Vec<_>>().join(" | "));
+                let sep = format!(
+                    "| {} |",
+                    rows[0]
+                        .iter()
+                        .map(|_| "---")
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                );
                 let body: Vec<String> = rows[1..]
                     .iter()
                     .map(|r| format!("| {} |", r.join(" | ")))
@@ -142,7 +149,7 @@ fn block_to_markdown(block: &Value) -> String {
 pub fn blocks_to_markdown(blocks: &[Value]) -> String {
     blocks
         .iter()
-        .map(|b| block_to_markdown(b))
+        .map(block_to_markdown)
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -151,9 +158,10 @@ pub fn blocks_to_markdown(blocks: &[Value]) -> String {
 
 fn parse_inline_tokens(text: &str) -> Vec<Value> {
     let mut tokens = Vec::new();
-    let pattern =
-        Regex::new(r"(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))")
-            .unwrap();
+    let pattern = Regex::new(
+        r"(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))",
+    )
+    .unwrap();
 
     let mut last_index = 0;
     for cap in pattern.captures_iter(text) {
