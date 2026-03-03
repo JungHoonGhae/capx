@@ -290,8 +290,9 @@ fn main() -> Result<()> {
         } => {
             let space_id = get_space_id(&cli, &api)?;
             let structure = api.find_structure_by_name(&space_id, r#type)?;
-            let structure = structure
-                .ok_or_else(|| anyhow::anyhow!("Type \"{}\" not found. Use `cap types` to list.", r#type))?;
+            let structure = structure.ok_or_else(|| {
+                anyhow::anyhow!("Type \"{}\" not found. Use `cap types` to list.", r#type)
+            })?;
 
             let props: Option<HashMap<String, serde_json::Value>> = if prop.is_empty() {
                 None

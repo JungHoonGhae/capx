@@ -34,10 +34,11 @@ jobs:
       - run: cargo build --release --target ${{ matrix.target }}
       - name: Package
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../${{ matrix.archive }} capx
-          cd ../../..
-          cp LICENSE README.md .
+          mkdir -p staging
+          cp target/${{ matrix.target }}/release/capx staging/
+          cp LICENSE README.md staging/
+          cd staging
+          tar czf ../${{ matrix.archive }} capx LICENSE README.md
       - name: Generate checksum
         run: shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
       - uses: actions/upload-artifact@v4

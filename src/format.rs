@@ -90,7 +90,12 @@ pub fn print_objects_summary(summary: &SpaceObjectsSummary) {
     if !summary.elements.is_empty() {
         println!();
         for e in &summary.elements {
-            println!("  {} {} {}", e.id.dimmed(), e.type_name.blue(), e.last_updated.dimmed());
+            println!(
+                "  {} {} {}",
+                e.id.dimmed(),
+                e.type_name.blue(),
+                e.last_updated.dimmed()
+            );
         }
     }
 }
