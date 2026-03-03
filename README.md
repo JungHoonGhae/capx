@@ -8,20 +8,56 @@
 | :-----| :----- |
 | [<img alt="X link" src="https://img.shields.io/badge/Follow-%40lucas_ghae-000000?style=flat-square&logo=x&labelColor=black" width="156px" />](https://x.com/lucas_ghae) | Follow [@lucas_ghae](https://x.com/lucas_ghae) on X for updates. |
 
-Unofficial CLI for [Capacities.io](https://capacities.io) — manage spaces, objects, tasks, and daily notes from your terminal.
+Unofficial CLI for [Capacities.io](https://capacities.io) — the first tool that gives you **full read/write access** to your Capacities data from the terminal.
 
 > **Disclaimer**: This is an independent community CLI tool. It is not affiliated with, endorsed by, or sponsored by Capacities. Capacities is a trademark of its respective owners.
 
-## About
+## Why capx?
 
-Capacities.io is a powerful note-taking and knowledge management tool with a rich web interface. But sometimes you want to quickly capture a thought, create a task, or search your knowledge base without leaving the terminal. **capx** brings the Capacities API to your command line.
+### The problem: Capacities has no real API
 
-**What it does:**
-- List and search spaces, objects, and types
-- Create, update, and delete objects with properties
-- Save weblinks and append to daily notes
-- Create tasks with context linking
-- Output as JSON for scripting and piping
+The [official Capacities API](https://api.capacities.io/docs) is in a very early stage. It offers only **5 endpoints**:
+
+| Official API | What it can do |
+|---|---|
+| `GET /spaces` | List spaces |
+| `GET /space-info` | List object types |
+| `POST /lookup` | Search by title |
+| `POST /save-weblink` | Save a URL |
+| `POST /save-to-daily-note` | Append to daily note |
+
+That's it. **No reading object content. No creating objects. No updating. No deleting.** You can put data in, but you can't get it back out.
+
+### Existing tools hit the same wall
+
+Community tools and MCP servers built on the official API inherit every limitation — they can only use those same 5 endpoints:
+
+- **Can't read** — No access to object content, notes, or page bodies
+- **Can't create** — No general object creation (only weblinks and daily notes)
+- **Can't update or delete** — No mutation of existing data
+- **Can't list objects** — No way to browse what's in a space
+- **Requires Pro subscription** — The official API is paywalled
+- **Strict rate limits** — 5 requests per 60 seconds on most endpoints
+
+### capx solves this
+
+**capx** uses the same internal Portal API that the Capacities desktop app uses. This gives you full access to everything the app can do:
+
+| capx | Official API | MCP Servers |
+|:----:|:------------:|:-----------:|
+| List & search objects | Search only | Search only |
+| **Read object content** | — | — |
+| **Create any object type** | Weblinks only | Weblinks only |
+| **Update objects** | — | — |
+| **Delete / restore** | — | — |
+| **Duplicate objects** | — | — |
+| **Manage properties** | — | — |
+| **Create tasks** | — | — |
+| **Context linking** | — | — |
+| **Markdown body** | — | — |
+| Auto-auth from desktop app | Manual API token | Manual API token |
+| No Pro subscription needed | Pro required | Pro required |
+| No rate limits | 5 req/60s | 5 req/60s |
 
 ## Support
 
@@ -34,13 +70,17 @@ If this tool helps you, consider supporting its maintenance:
 ## Features
 
 - 🔍 **Search** — Full-text search across your Capacities space
-- 📝 **CRUD** — Create, read, update, and delete any object type
-- 📋 **Tasks** — Create tasks with properties and context
+- 📖 **Read** — Get full object content rendered as markdown
+- 📝 **Create** — Create any object type (Page, Person, Book, custom types...)
+- ✏️ **Update** — Modify title, description, body, and properties
+- 🗑️ **Delete & Restore** — Soft-delete and undo
+- 📋 **Tasks** — Create tasks with status, priority, and context
 - 📅 **Daily Notes** — Append to today's daily note
 - 🔗 **Weblinks** — Save URLs with metadata
-- 🏷️ **Properties** — Set key=value properties on objects
-- 🔄 **Context** — Link entities as backlinks
-- 📦 **JSON** — Machine-readable output for scripting
+- 🏷️ **Properties** — Set key=value properties (dates, selects, strings)
+- 🔄 **Context** — Link entities as backlinks by UUID or search term
+- 📦 **JSON** — Machine-readable output for scripting and piping
+- 🔐 **Auto-auth** — Token extracted from Capacities desktop app automatically
 
 ## Requirements
 
