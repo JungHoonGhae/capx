@@ -69,7 +69,7 @@ If this tool helps you, consider supporting its maintenance:
 
 ## Features
 
-- 🔍 **Search** — Full-text search across your Capacities space
+- 🔍 **Search** — Search objects by title across your Capacities space
 - 📖 **Read** — Get full object content rendered as markdown
 - 📝 **Create** — Create any object type (Page, Person, Book, custom types...)
 - ✏️ **Update** — Modify title, description, body, and properties
@@ -97,6 +97,8 @@ If this tool helps you, consider supporting its maintenance:
 brew tap JungHoonGhae/capx
 brew install capx
 ```
+
+> **Note for Linux users**: Auto-auth is macOS-only (reads from Capacities desktop app cookies). On Linux, set `CAP_TOKEN` or pass `--token <TOKEN>` manually.
 
 ### Cargo
 
@@ -147,6 +149,7 @@ capx update <uuid> -t "New Title"   # Update object
 capx rm <uuid>                      # Delete (soft)
 capx undo <uuid>                    # Restore deleted
 capx dup <uuid>                     # Duplicate
+capx trash                          # List trashed items
 ```
 
 ### Tasks & Notes
