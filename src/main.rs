@@ -173,6 +173,18 @@ enum Commands {
     },
 }
 
+fn build_props(prop: &[(String, String)]) -> Option<HashMap<String, serde_json::Value>> {
+    if prop.is_empty() {
+        None
+    } else {
+        Some(
+            prop.iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect(),
+        )
+    }
+}
+
 fn parse_key_val(s: &str) -> Result<(String, String), String> {
     let pos = s
         .find('=')
@@ -270,8 +282,7 @@ fn main() -> Result<()> {
                 let data = api.get_content_by_ids(&id_strings)?;
                 format::print_json(&data);
             } else {
-                let space_id = get_space_id(&cli, &api)?;
-                let data = api.get_formatted_objects(&space_id, &id_strings)?;
+                let data = api.get_formatted_objects(&id_strings)?;
                 if json_mode {
                     format::print_json(&data);
                 } else {
@@ -291,18 +302,10 @@ fn main() -> Result<()> {
             let space_id = get_space_id(&cli, &api)?;
             let structure = api.find_structure_by_name(&space_id, r#type)?;
             let structure = structure.ok_or_else(|| {
-                anyhow::anyhow!("Type \"{}\" not found. Use `cap types` to list.", r#type)
+                anyhow::anyhow!("Type \"{}\" not found. Use `capx types` to list.", r#type)
             })?;
 
-            let props: Option<HashMap<String, serde_json::Value>> = if prop.is_empty() {
-                None
-            } else {
-                let map: HashMap<String, serde_json::Value> = prop
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                    .collect();
-                Some(map)
-            };
+            let props = build_props(prop);
 
             let context_ids = if context.is_empty() {
                 None
@@ -336,15 +339,7 @@ fn main() -> Result<()> {
             prop,
         } => {
             let space_id = get_space_id(&cli, &api)?;
-            let props: Option<HashMap<String, serde_json::Value>> = if prop.is_empty() {
-                None
-            } else {
-                let map: HashMap<String, serde_json::Value> = prop
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                    .collect();
-                Some(map)
-            };
+            let props = build_props(prop);
 
             let status = api.update_object(
                 &space_id,
@@ -405,7 +400,11 @@ fn main() -> Result<()> {
         Commands::Trash => {
             let space_id = get_space_id(&cli, &api)?;
             let data = api.get_content_trash(&space_id)?;
-            format::print_json(&data);
+            if json_mode {
+                format::print_json(&data);
+            } else {
+                format::print_trash(&data);
+            }
         }
 
         Commands::Link {
@@ -448,16 +447,7 @@ fn main() -> Result<()> {
             context,
         } => {
             let space_id = get_space_id(&cli, &api)?;
-
-            let props: Option<HashMap<String, serde_json::Value>> = if prop.is_empty() {
-                None
-            } else {
-                let map: HashMap<String, serde_json::Value> = prop
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                    .collect();
-                Some(map)
-            };
+            let props = build_props(prop);
 
             let context_ids = if context.is_empty() {
                 None

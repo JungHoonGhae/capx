@@ -1,6 +1,15 @@
 use regex::Regex;
 use serde_json::{json, Value};
+use std::sync::LazyLock;
 use uuid::Uuid;
+
+static INLINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))")
+        .unwrap()
+});
+static FENCE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^```(\w*)$").unwrap());
+static HR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(-{3,}|\*{3,}|_{3,})$").unwrap());
+static HEADING_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(#{1,4})\s+(.*)$").unwrap());
 
 // --- Blocks → Markdown ---
 
@@ -63,13 +72,13 @@ fn block_to_markdown(block: &Value) -> String {
         }
         "CodeBlock" => {
             let lang = block["language"].as_str().unwrap_or("");
-            let code = block["code"].as_str().unwrap_or_else(|| {
-                block["tokens"]
+            let code = match block["code"].as_str() {
+                Some(s) => s.to_string(),
+                None => block["tokens"]
                     .as_array()
                     .map(|t| tokens_to_markdown(t))
-                    .unwrap_or_default()
-                    .leak()
-            });
+                    .unwrap_or_default(),
+            };
             format!("```{lang}\n{code}\n```")
         }
         "EntityBlock" => {
@@ -158,13 +167,9 @@ pub fn blocks_to_markdown(blocks: &[Value]) -> String {
 
 fn parse_inline_tokens(text: &str) -> Vec<Value> {
     let mut tokens = Vec::new();
-    let pattern = Regex::new(
-        r"(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))",
-    )
-    .unwrap();
 
     let mut last_index = 0;
-    for cap in pattern.captures_iter(text) {
+    for cap in INLINE_RE.captures_iter(text) {
         let m = cap.get(0).unwrap();
         if m.start() > last_index {
             tokens.push(json!({
@@ -240,15 +245,12 @@ pub fn markdown_to_blocks(markdown: &str) -> Vec<Value> {
     let lines: Vec<&str> = markdown.split('\n').collect();
     let mut blocks = Vec::new();
     let mut i = 0;
-    let fence_re = Regex::new(r"^```(\w*)$").unwrap();
-    let hr_re = Regex::new(r"^(-{3,}|\*{3,}|_{3,})$").unwrap();
-    let heading_re = Regex::new(r"^(#{1,4})\s+(.*)$").unwrap();
 
     while i < lines.len() {
         let line = lines[i];
 
         // Code block
-        if let Some(cap) = fence_re.captures(line) {
+        if let Some(cap) = FENCE_RE.captures(line) {
             let lang = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             let mut code_lines = Vec::new();
             i += 1;
@@ -270,7 +272,7 @@ pub fn markdown_to_blocks(markdown: &str) -> Vec<Value> {
         }
 
         // Horizontal rule
-        if hr_re.is_match(line) {
+        if HR_RE.is_match(line) {
             blocks.push(json!({
                 "id": Uuid::new_v4().to_string(),
                 "type": "HorizontalLineBlock",
@@ -283,7 +285,7 @@ pub fn markdown_to_blocks(markdown: &str) -> Vec<Value> {
         }
 
         // Heading
-        if let Some(cap) = heading_re.captures(line) {
+        if let Some(cap) = HEADING_RE.captures(line) {
             let level = cap.get(1).unwrap().as_str().len();
             let text = cap.get(2).unwrap().as_str();
             blocks.push(json!({

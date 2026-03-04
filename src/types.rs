@@ -189,6 +189,7 @@ pub struct SpaceObjectsSummary {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SpaceObjectElement {
     pub id: String,
+    pub title: String,
     #[serde(rename = "lastUpdated")]
     pub last_updated: String,
     #[serde(rename = "structureId")]

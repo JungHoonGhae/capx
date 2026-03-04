@@ -91,9 +91,10 @@ pub fn print_objects_summary(summary: &SpaceObjectsSummary) {
         println!();
         for e in &summary.elements {
             println!(
-                "  {} {} {}",
+                "  {} {} {} {}",
                 e.id.dimmed(),
                 e.type_name.blue(),
+                e.title.bold(),
                 e.last_updated.dimmed()
             );
         }
@@ -177,6 +178,23 @@ fn format_prop_value(val: &Value) -> String {
 pub fn print_created(id: &str, status: &str) {
     println!("  {} {}", "Created:".green(), id);
     println!("  {} {}", "Status:".dimmed(), status);
+}
+
+pub fn print_trash(data: &Value) {
+    let items = data.as_array();
+    match items {
+        Some(arr) if !arr.is_empty() => {
+            for item in arr {
+                let id = item["id"].as_str().unwrap_or("?");
+                let title = item["properties"]["title"]["val"]
+                    .as_str()
+                    .unwrap_or("Untitled");
+                let structure = item["structureId"].as_str().unwrap_or("");
+                println!("  {} {} {}", id.dimmed(), title.bold(), structure.blue());
+            }
+        }
+        _ => println!("{}", "Trash is empty.".dimmed()),
+    }
 }
 
 pub fn print_status(action: &str, status: &str) {

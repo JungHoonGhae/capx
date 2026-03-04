@@ -1,8 +1,14 @@
 use anyhow::{bail, Context, Result};
+use regex::Regex;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 use uuid::Uuid;
+
+static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$").unwrap()
+});
 
 use crate::blocks::{blocks_to_markdown, markdown_to_blocks};
 use crate::types::*;
@@ -283,14 +289,7 @@ impl Api {
             })),
         )?;
 
-        let create_status = res
-            .get("componentReturnObjects")
-            .and_then(|arr| arr.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|obj| obj.get("status"))
-            .and_then(|s| s.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let create_status = extract_sync_status(&res);
 
         // Add context via LinkToken injection if context_ids provided
         if create_status == "success" {
@@ -307,13 +306,10 @@ impl Api {
     /// Resolve context references: UUIDs pass through, non-UUIDs are searched.
     /// Returns resolved entity IDs.
     pub fn resolve_context_refs(&self, space_id: &str, refs: &[String]) -> Result<Vec<String>> {
-        let uuid_re =
-            regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-                .unwrap();
         let mut ids = Vec::new();
 
         for r in refs {
-            if uuid_re.is_match(&r.to_lowercase()) {
+            if UUID_RE.is_match(&r.to_lowercase()) {
                 ids.push(r.clone());
             } else {
                 // Search for the entity by name
@@ -648,7 +644,7 @@ impl Api {
             });
         }
 
-        let mut all_entities: Vec<(String, String, String)> = Vec::new(); // (id, lastUpdated, structureId)
+        let mut all_entities: Vec<(String, String, String, String)> = Vec::new(); // (id, title, lastUpdated, structureId)
         let mut structure_name_map: HashMap<String, String> = HashMap::new();
 
         for chunk in elements.chunks(50) {
@@ -666,7 +662,14 @@ impl Api {
                     structure_name_map.insert(c.id, title);
                 } else if c.comp_type == "RootEntity" {
                     if let Some(elem) = elements.iter().find(|e| e.id == c.id) {
-                        all_entities.push((c.id, elem.last_updated.clone(), c.structure_id));
+                        let title = c
+                            .properties
+                            .get("title")
+                            .and_then(|v| v.get("val"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Untitled")
+                            .to_string();
+                        all_entities.push((c.id, title, elem.last_updated.clone(), c.structure_id));
                     }
                 }
             }
@@ -675,7 +678,7 @@ impl Api {
         // Resolve unresolved structure IDs
         let unresolved: Vec<String> = all_entities
             .iter()
-            .map(|(_, _, sid)| sid.clone())
+            .map(|(_, _, _, sid)| sid.clone())
             .collect::<HashSet<_>>()
             .into_iter()
             .filter(|id| !structure_name_map.contains_key(id))
@@ -700,7 +703,7 @@ impl Api {
         let mut summary: HashMap<String, usize> = HashMap::new();
         let result_elements: Vec<SpaceObjectElement> = all_entities
             .iter()
-            .map(|(id, last_updated, structure_id)| {
+            .map(|(id, title, last_updated, structure_id)| {
                 let type_name = structure_name_map
                     .get(structure_id)
                     .cloned()
@@ -708,6 +711,7 @@ impl Api {
                 *summary.entry(type_name.clone()).or_insert(0) += 1;
                 SpaceObjectElement {
                     id: id.clone(),
+                    title: title.clone(),
                     last_updated: last_updated.clone(),
                     structure_id: structure_id.clone(),
                     type_name,
@@ -736,11 +740,7 @@ impl Api {
 
     // --- Formatted objects ---
 
-    pub fn get_formatted_objects(
-        &self,
-        _space_id: &str,
-        ids: &[String],
-    ) -> Result<Vec<FormattedObject>> {
+    pub fn get_formatted_objects(&self, ids: &[String]) -> Result<Vec<FormattedObject>> {
         let raw = self.get_content_by_ids(ids)?;
         let components = raw.components.unwrap_or_default();
         let entities: Vec<&Component> = components
@@ -1115,14 +1115,7 @@ impl Api {
             })),
         )?;
 
-        let status = res
-            .get("componentReturnObjects")
-            .and_then(|arr| arr.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|obj| obj.get("status"))
-            .and_then(|s| s.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let status = extract_sync_status(&res);
 
         // Add context via LinkToken injection if context_ids provided
         if status == "success" {
@@ -1164,18 +1157,25 @@ impl Api {
             merged_props["description"] = json!({ "val": d });
         }
 
+        // Fetch structure definition once if needed for properties or body
+        let needs_struct =
+            (properties.is_some() && !properties.unwrap().is_empty()) || body_markdown.is_some();
+        let prop_defs: Vec<RawPropertyDefinition> = if needs_struct {
+            let struct_data =
+                self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
+            struct_data
+                .components
+                .and_then(|c| c.into_iter().next())
+                .and_then(|s| s.data.get("propertyDefinitions").cloned())
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
         // Normalize user properties
         if let Some(user_props) = properties {
             if !user_props.is_empty() {
-                let struct_data =
-                    self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
-                let structure = struct_data.components.and_then(|c| c.into_iter().next());
-                let prop_defs: Vec<RawPropertyDefinition> = structure
-                    .as_ref()
-                    .and_then(|s| s.data.get("propertyDefinitions"))
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
-
                 let name_to_def: HashMap<String, &RawPropertyDefinition> = prop_defs
                     .iter()
                     .filter_map(|d| d.name.as_ref().map(|n| (n.val.to_lowercase(), d)))
@@ -1209,15 +1209,6 @@ impl Api {
 
         // Handle bodyMarkdown
         if let Some(body_md) = body_markdown {
-            let struct_data =
-                self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
-            let structure = struct_data.components.and_then(|c| c.into_iter().next());
-            let prop_defs: Vec<RawPropertyDefinition> = structure
-                .as_ref()
-                .and_then(|s| s.data.get("propertyDefinitions"))
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_default();
-
             if let Some(first_block_prop) = prop_defs.iter().find(|p| p.data_type == "blocks") {
                 let blocks = markdown_to_blocks(body_md);
                 let existing_blocks = merged_data.get("blocks").cloned().unwrap_or(json!({}));
@@ -1251,14 +1242,7 @@ impl Api {
             })),
         )?;
 
-        let status = res
-            .get("componentReturnObjects")
-            .and_then(|arr| arr.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|obj| obj.get("status"))
-            .and_then(|s| s.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let status = extract_sync_status(&res);
 
         Ok(status)
     }
@@ -1288,50 +1272,17 @@ impl Api {
             })),
         )?;
 
-        let status = res
-            .get("componentReturnObjects")
-            .and_then(|arr| arr.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|obj| obj.get("status"))
-            .and_then(|s| s.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let status = extract_sync_status(&res);
 
         Ok(status)
     }
 
     // --- Helpers ---
 
-    fn find_database_for_type(&self, space_id: &str, type_name: &str) -> Result<Option<String>> {
-        let space_content = self.get_space_content(space_id)?;
-        let elements = space_content.elements.unwrap_or_default();
-        if elements.is_empty() {
-            return Ok(None);
-        }
-
-        for chunk in elements.chunks(50) {
-            let ids: Vec<String> = chunk.iter().map(|e| e.id.clone()).collect();
-            let result = self.get_content_by_ids(&ids)?;
-            for c in result.components.unwrap_or_default() {
-                if c.comp_type == type_name {
-                    if let Some(dbs) = &c.databases {
-                        if let Some(first) = dbs.first() {
-                            if let Some(db_id) = first.get("id").and_then(|v| v.as_str()) {
-                                return Ok(Some(db_id.to_string()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    fn find_database_for_structure(
+    fn find_database(
         &self,
         space_id: &str,
-        structure_id: &str,
+        predicate: impl Fn(&Component) -> bool,
     ) -> Result<Option<String>> {
         let space_content = self.get_space_content(space_id)?;
         let elements = space_content.elements.unwrap_or_default();
@@ -1343,7 +1294,7 @@ impl Api {
             let ids: Vec<String> = chunk.iter().map(|e| e.id.clone()).collect();
             let result = self.get_content_by_ids(&ids)?;
             for c in result.components.unwrap_or_default() {
-                if c.structure_id == structure_id && c.comp_type == "RootEntity" {
+                if predicate(&c) {
                     if let Some(dbs) = &c.databases {
                         if let Some(first) = dbs.first() {
                             if let Some(db_id) = first.get("id").and_then(|v| v.as_str()) {
@@ -1357,9 +1308,33 @@ impl Api {
 
         Ok(None)
     }
+
+    fn find_database_for_type(&self, space_id: &str, type_name: &str) -> Result<Option<String>> {
+        self.find_database(space_id, |c| c.comp_type == type_name)
+    }
+
+    fn find_database_for_structure(
+        &self,
+        space_id: &str,
+        structure_id: &str,
+    ) -> Result<Option<String>> {
+        self.find_database(space_id, |c| {
+            c.structure_id == structure_id && c.comp_type == "RootEntity"
+        })
+    }
 }
 
 // --- Free helpers ---
+
+fn extract_sync_status(res: &Value) -> String {
+    res.get("componentReturnObjects")
+        .and_then(|arr| arr.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|obj| obj.get("status"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
 
 fn collect_entity_ids(val: &Value, ids: &mut HashSet<String>) {
     if let Some(arr) = val.as_array() {
@@ -1419,10 +1394,7 @@ fn resolve_prop_key<'a>(
     prop_defs: &'a [RawPropertyDefinition],
     name_map: &HashMap<String, &'a RawPropertyDefinition>,
 ) -> (String, Option<&'a RawPropertyDefinition>) {
-    // Check if key is a UUID
-    let is_uuid = regex::Regex::new(r"^[0-9a-f-]{36}$")
-        .unwrap()
-        .is_match(&key.to_lowercase());
+    let is_uuid = UUID_RE.is_match(&key.to_lowercase());
 
     if is_uuid {
         let def = prop_defs.iter().find(|d| d.id == key);
