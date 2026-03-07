@@ -14,6 +14,18 @@ jobs:
   update-homebrew:
     runs-on: ubuntu-latest
     steps:
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
+
+      - name: Fetch Homebrew token
+        id: doppler
+        run: |
+          TOKEN=$(doppler secrets get HOMEBREW_TAP_TOKEN --plain)
+          echo "::add-mask::$TOKEN"
+          echo "HOMEBREW_TAP_TOKEN=$TOKEN" >> "$GITHUB_OUTPUT"
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_GITHUB }}
+
       - name: Get version
         id: version
         run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
@@ -37,7 +49,7 @@ jobs:
       - name: Dispatch to homebrew-capx
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          token: ${{ steps.doppler.outputs.HOMEBREW_TAP_TOKEN }}
           repository: JungHoonGhae/homebrew-capx
           event-type: update-formula
           client-payload: |
