@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-03-07
+
+### Added
+
+- Daily note CRUD commands:
+  - `capx daily get` — read daily note
+  - `capx daily delete` — delete by marker / last N blocks
+  - `capx daily set` — replace daily note content
+
+### Fixed
+
+- Allows repairing incorrectly appended daily note blocks (e.g., literal `\\n` sequences).
+
 ## [0.1.0] - 2026-03-03
 
 ### Added
@@ -30,4 +43,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `--space-id` and `--token` global overrides
 - Auto-detect first space when `CAP_SPACE_ID` is not set
 
+[0.1.1]: https://github.com/JungHoonGhae/capx/releases/tag/v0.1.1
 [0.1.0]: https://github.com/JungHoonGhae/capx/releases/tag/v0.1.0

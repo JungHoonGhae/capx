@@ -126,6 +126,16 @@ capx create Page "My New Page" -b "Some content here"
 
 # Append to daily note
 capx daily "Remember to review PR"
+
+# Read today's daily note
+capx daily get
+
+# Delete the last appended block (or by marker text)
+capx daily delete --last 1 --yes
+capx daily delete --marker "\\n" --yes  # e.g., repair bad literal \\n blocks
+
+# Replace daily note content (dangerous; use with care)
+capx daily set -b "# Rewritten daily note" --yes
 ```
 
 ## Usage
@@ -157,6 +167,10 @@ capx trash                          # List trashed items
 ```sh
 capx task "Buy groceries" -b "Milk, eggs"     # Create task
 capx daily "Some text"                         # Append to daily note
+capx daily get                                 # Read daily note
+capx daily delete --marker "foo" --yes          # Delete blocks containing text
+capx daily delete --last 1 --yes                # Delete last block
+capx daily set -b "# New daily note" --yes      # Replace entire daily note
 capx link https://example.com -t "Example"     # Save weblink
 ```
 
