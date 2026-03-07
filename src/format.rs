@@ -197,6 +197,83 @@ pub fn print_trash(data: &Value) {
     }
 }
 
+pub fn print_daily_note(date: &str, id: &str, body: &str) {
+    println!("  {} {}", "Daily Note".blue(), date.bold());
+    println!("  {} {}", "ID:".dimmed(), id.dimmed());
+    if body.is_empty() {
+        println!("\n  {}", "(empty)".dimmed());
+    } else {
+        println!();
+        for line in body.lines() {
+            println!("  {line}");
+        }
+    }
+    println!();
+}
+
 pub fn print_status(action: &str, status: &str) {
     println!("  {} {}", format!("{action}:").green(), status);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn format_prop_value_string() {
+        let val = json!("hello");
+        assert_eq!(format_prop_value(&val), "hello");
+    }
+
+    #[test]
+    fn format_prop_value_array_with_titles() {
+        let val = json!([{"title": "Tag1"}, {"title": "Tag2"}]);
+        assert_eq!(format_prop_value(&val), "Tag1, Tag2");
+    }
+
+    #[test]
+    fn format_prop_value_array_strings() {
+        let val = json!(["a", "b", "c"]);
+        assert_eq!(format_prop_value(&val), "a, b, c");
+    }
+
+    #[test]
+    fn format_prop_value_object_with_title() {
+        let val = json!({"title": "MyObj", "id": "123"});
+        assert_eq!(format_prop_value(&val), "MyObj");
+    }
+
+    #[test]
+    fn format_prop_value_object_no_title() {
+        let val = json!({"id": "123"});
+        let result = format_prop_value(&val);
+        assert!(result.contains("123"));
+    }
+
+    #[test]
+    fn format_prop_value_bool() {
+        assert_eq!(format_prop_value(&json!(true)), "true");
+        assert_eq!(format_prop_value(&json!(false)), "false");
+    }
+
+    #[test]
+    fn format_prop_value_number() {
+        assert_eq!(format_prop_value(&json!(42)), "42");
+        assert_eq!(format_prop_value(&json!(3.14)), "3.14");
+    }
+
+    #[test]
+    fn format_prop_value_null() {
+        assert_eq!(format_prop_value(&json!(null)), "");
+    }
+
+    #[test]
+    fn format_prop_value_mixed_array() {
+        let val = json!([{"title": "Named"}, "plain", 42]);
+        let result = format_prop_value(&val);
+        assert!(result.contains("Named"));
+        assert!(result.contains("plain"));
+        assert!(result.contains("42"));
+    }
 }
