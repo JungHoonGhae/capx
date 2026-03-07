@@ -140,13 +140,14 @@ enum Commands {
         body: Option<String>,
     },
 
-    /// Append to today's daily note
+    /// Daily note operations (append, get, delete, set)
     Daily {
-        /// Markdown text
-        text: String,
-        /// Skip timestamp
-        #[arg(long)]
-        no_timestamp: bool,
+        #[command(subcommand)]
+        action: Option<DailyAction>,
+
+        /// Markdown text (shorthand for `daily append <text>`)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        text: Vec<String>,
     },
 
     /// Create a task
@@ -173,6 +174,56 @@ enum Commands {
     },
 }
 
+#[derive(Subcommand, Clone)]
+enum DailyAction {
+    /// Append text to daily note
+    Append {
+        /// Markdown text
+        text: Vec<String>,
+        /// Skip timestamp
+        #[arg(long)]
+        no_timestamp: bool,
+        /// Date (YYYY-MM-DD), default today
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// Show daily note content
+    Get {
+        /// Date (YYYY-MM-DD), default today
+        #[arg(long)]
+        date: Option<String>,
+        /// Show raw block JSON
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Delete blocks from daily note
+    Delete {
+        /// Delete the last N blocks (default 1)
+        #[arg(long, default_value = "1")]
+        last: usize,
+        /// Delete blocks containing this text
+        #[arg(long)]
+        marker: Option<String>,
+        /// Date (YYYY-MM-DD), default today
+        #[arg(long)]
+        date: Option<String>,
+        /// Skip confirmation
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Replace entire daily note content
+    Set {
+        /// Markdown content (reads from stdin if omitted)
+        body: Option<String>,
+        /// Date (YYYY-MM-DD), default today
+        #[arg(long)]
+        date: Option<String>,
+        /// Skip confirmation
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
 fn build_props(prop: &[(String, String)]) -> Option<HashMap<String, serde_json::Value>> {
     if prop.is_empty() {
         None
@@ -192,6 +243,60 @@ fn parse_key_val(s: &str) -> Result<(String, String), String> {
     Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_key_val_valid() {
+        let (k, v) = parse_key_val("status=done").unwrap();
+        assert_eq!(k, "status");
+        assert_eq!(v, "done");
+    }
+
+    #[test]
+    fn parse_key_val_no_equals() {
+        assert!(parse_key_val("noequalssign").is_err());
+    }
+
+    #[test]
+    fn parse_key_val_value_with_equals() {
+        let (k, v) = parse_key_val("url=https://example.com?a=1").unwrap();
+        assert_eq!(k, "url");
+        assert_eq!(v, "https://example.com?a=1");
+    }
+
+    #[test]
+    fn parse_key_val_empty_value() {
+        let (k, v) = parse_key_val("key=").unwrap();
+        assert_eq!(k, "key");
+        assert_eq!(v, "");
+    }
+
+    #[test]
+    fn build_props_empty() {
+        assert!(build_props(&[]).is_none());
+    }
+
+    #[test]
+    fn build_props_non_empty() {
+        let pairs = vec![
+            ("key1".to_string(), "val1".to_string()),
+            ("key2".to_string(), "val2".to_string()),
+        ];
+        let result = build_props(&pairs).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result["key1"],
+            serde_json::Value::String("val1".to_string())
+        );
+        assert_eq!(
+            result["key2"],
+            serde_json::Value::String("val2".to_string())
+        );
+    }
+}
+
 fn get_space_id(cli: &Cli, api: &api::Api) -> Result<String> {
     if let Some(id) = &cli.space_id {
         return Ok(id.clone());
@@ -208,6 +313,38 @@ fn get_space_id(cli: &Cli, api: &api::Api) -> Result<String> {
     } else {
         anyhow::bail!("No spaces found. Use --space-id or set CAP_SPACE_ID.")
     }
+}
+
+fn resolve_date(date: Option<&str>) -> String {
+    match date {
+        Some(d) => d.to_string(),
+        None => chrono::Local::now().format("%Y-%m-%d").to_string(),
+    }
+}
+
+fn backup_daily_note(component: &types::Component, date: &str) -> Result<()> {
+    let backup_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("capx")
+        .join("backups");
+    std::fs::create_dir_all(&backup_dir)?;
+
+    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("daily_{date}_{ts}.json");
+    let path = backup_dir.join(&filename);
+
+    let blocks = component
+        .data
+        .get("blocks")
+        .and_then(|b| b.get("RootDailyNote_notes"));
+    let backup = serde_json::json!({
+        "id": component.id,
+        "date": date,
+        "blocks": blocks,
+    });
+    std::fs::write(&path, serde_json::to_string_pretty(&backup)?)?;
+    eprintln!("  Backup saved to {}", path.display());
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -430,13 +567,228 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Daily { text, no_timestamp } => {
+        Commands::Daily { action, text } => {
             let space_id = get_space_id(&cli, &api)?;
-            api.save_to_daily_note(&space_id, text, *no_timestamp)?;
-            if json_mode {
-                format::print_json(&serde_json::json!({ "status": "ok" }));
+
+            // Determine which action to take
+            let resolved_action = if let Some(a) = action {
+                a.clone()
+            } else if !text.is_empty() {
+                // Backward compat: `capx daily "some text"` → append
+                DailyAction::Append {
+                    text: text.clone(),
+                    no_timestamp: false,
+                    date: None,
+                }
             } else {
-                format::print_status("Saved", "daily note updated");
+                // No action and no text → show today's note
+                DailyAction::Get {
+                    date: None,
+                    raw: false,
+                }
+            };
+
+            match resolved_action {
+                DailyAction::Append {
+                    text: append_text,
+                    no_timestamp,
+                    date,
+                } => {
+                    let md = append_text.join(" ");
+                    if md.is_empty() {
+                        anyhow::bail!("Text required for append.");
+                    }
+                    if date.is_some() {
+                        // For non-today dates, we need to fetch + modify blocks directly
+                        let date_str = resolve_date(date.as_deref());
+                        let component = api
+                            .get_daily_note(&space_id, &date_str)?
+                            .ok_or_else(|| anyhow::anyhow!("No daily note found for {date_str}"))?;
+
+                        let mut blocks = component
+                            .data
+                            .get("blocks")
+                            .and_then(|b| b.get("RootDailyNote_notes"))
+                            .and_then(|b| b.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+
+                        // Add timestamp block if needed
+                        if !no_timestamp {
+                            let ts = chrono::Local::now().format("%H:%M").to_string();
+                            let ts_blocks = crate::blocks::markdown_to_blocks(&format!("**{ts}**"));
+                            blocks.extend(ts_blocks);
+                        }
+
+                        let new_blocks = crate::blocks::markdown_to_blocks(&md);
+                        blocks.extend(new_blocks);
+
+                        let status = api.sync_daily_note(&space_id, &component, blocks)?;
+                        if json_mode {
+                            format::print_json(&serde_json::json!({ "status": status }));
+                        } else {
+                            format::print_status(
+                                "Saved",
+                                &format!("daily note {date_str} updated"),
+                            );
+                        }
+                    } else {
+                        // Today: use the simple append endpoint
+                        api.save_to_daily_note(&space_id, &md, no_timestamp)?;
+                        if json_mode {
+                            format::print_json(&serde_json::json!({ "status": "ok" }));
+                        } else {
+                            format::print_status("Saved", "daily note updated");
+                        }
+                    }
+                }
+
+                DailyAction::Get { date, raw } => {
+                    let date_str = resolve_date(date.as_deref());
+                    let component = api
+                        .get_daily_note(&space_id, &date_str)?
+                        .ok_or_else(|| anyhow::anyhow!("No daily note found for {date_str}"))?;
+
+                    if raw {
+                        let blocks = component
+                            .data
+                            .get("blocks")
+                            .and_then(|b| b.get("RootDailyNote_notes"));
+                        format::print_json(&blocks);
+                    } else if json_mode {
+                        let md = api::Api::daily_note_to_markdown(&component);
+                        format::print_json(&serde_json::json!({
+                            "id": component.id,
+                            "date": date_str,
+                            "body": md,
+                        }));
+                    } else {
+                        let md = api::Api::daily_note_to_markdown(&component);
+                        format::print_daily_note(&date_str, &component.id, &md);
+                    }
+                }
+
+                DailyAction::Delete {
+                    last,
+                    marker,
+                    date,
+                    yes,
+                } => {
+                    let date_str = resolve_date(date.as_deref());
+                    let component = api
+                        .get_daily_note(&space_id, &date_str)?
+                        .ok_or_else(|| anyhow::anyhow!("No daily note found for {date_str}"))?;
+
+                    let blocks = component
+                        .data
+                        .get("blocks")
+                        .and_then(|b| b.get("RootDailyNote_notes"))
+                        .and_then(|b| b.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    if blocks.is_empty() {
+                        anyhow::bail!("Daily note for {date_str} has no blocks to delete.");
+                    }
+
+                    let new_blocks = if let Some(ref marker_text) = marker {
+                        // Delete blocks containing the marker text
+                        let filtered: Vec<serde_json::Value> = blocks
+                            .into_iter()
+                            .filter(|b| {
+                                let md = crate::blocks::blocks_to_markdown(std::slice::from_ref(b));
+                                !md.contains(marker_text)
+                            })
+                            .collect();
+                        filtered
+                    } else {
+                        // Delete last N blocks
+                        let keep = blocks.len().saturating_sub(last);
+                        blocks[..keep].to_vec()
+                    };
+
+                    let removed = component
+                        .data
+                        .get("blocks")
+                        .and_then(|b| b.get("RootDailyNote_notes"))
+                        .and_then(|b| b.as_array())
+                        .map(|b| b.len())
+                        .unwrap_or(0)
+                        - new_blocks.len();
+
+                    if removed == 0 {
+                        if json_mode {
+                            format::print_json(&serde_json::json!({ "status": "no_match" }));
+                        } else {
+                            println!("  No matching blocks found.");
+                        }
+                        return Ok(());
+                    }
+
+                    if !yes {
+                        eprint!("Delete {removed} block(s) from daily note {date_str}? [y/N] ");
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input)?;
+                        if !input.trim().eq_ignore_ascii_case("y") {
+                            println!("Cancelled.");
+                            return Ok(());
+                        }
+                    }
+
+                    // Backup before delete
+                    backup_daily_note(&component, &date_str)?;
+
+                    let status = api.sync_daily_note(&space_id, &component, new_blocks)?;
+                    if json_mode {
+                        format::print_json(
+                            &serde_json::json!({ "status": status, "removed": removed }),
+                        );
+                    } else {
+                        format::print_status(
+                            "Deleted",
+                            &format!("{removed} block(s) from {date_str}"),
+                        );
+                    }
+                }
+
+                DailyAction::Set { body, date, yes } => {
+                    let date_str = resolve_date(date.as_deref());
+                    let component = api
+                        .get_daily_note(&space_id, &date_str)?
+                        .ok_or_else(|| anyhow::anyhow!("No daily note found for {date_str}"))?;
+
+                    let md = match body {
+                        Some(ref b) => b.clone(),
+                        None => {
+                            // Read from stdin
+                            eprintln!("Reading markdown from stdin (Ctrl-D to end)...");
+                            let mut buf = String::new();
+                            std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+                            buf
+                        }
+                    };
+
+                    if !yes {
+                        eprint!("Replace entire daily note for {date_str}? [y/N] ");
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input)?;
+                        if !input.trim().eq_ignore_ascii_case("y") {
+                            println!("Cancelled.");
+                            return Ok(());
+                        }
+                    }
+
+                    // Backup before overwrite
+                    backup_daily_note(&component, &date_str)?;
+
+                    let new_blocks = crate::blocks::markdown_to_blocks(&md);
+                    let status = api.sync_daily_note(&space_id, &component, new_blocks)?;
+                    if json_mode {
+                        format::print_json(&serde_json::json!({ "status": status }));
+                    } else {
+                        format::print_status("Set", &format!("daily note {date_str} replaced"));
+                    }
+                }
             }
         }
 

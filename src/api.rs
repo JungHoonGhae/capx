@@ -146,6 +146,91 @@ impl Api {
         Ok(())
     }
 
+    /// Find the RootDailyNote component for a given date (YYYY-MM-DD).
+    /// Scans space content in batches, returns the first match.
+    pub fn get_daily_note(&self, space_id: &str, date: &str) -> Result<Option<Component>> {
+        let target_date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .context("Invalid date format, expected YYYY-MM-DD")?;
+
+        let space_content = self.get_space_content(space_id)?;
+        let elements = space_content.elements.unwrap_or_default();
+
+        for chunk in elements.chunks(50) {
+            let ids: Vec<String> = chunk.iter().map(|e| e.id.clone()).collect();
+            let result = self.get_content_by_ids(&ids)?;
+            for c in result.components.unwrap_or_default() {
+                if c.comp_type != "RootDailyNote" {
+                    continue;
+                }
+                if let Some(created) = &c.created_at {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created) {
+                        if dt.date_naive() == target_date {
+                            return Ok(Some(c));
+                        }
+                    }
+                    // Also try parsing without timezone (some dates may be plain ISO)
+                    if let Ok(dt) =
+                        chrono::NaiveDateTime::parse_from_str(created, "%Y-%m-%dT%H:%M:%S%.fZ")
+                    {
+                        if dt.date() == target_date {
+                            return Ok(Some(c));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Get blocks from a daily note component as markdown.
+    pub fn daily_note_to_markdown(component: &Component) -> String {
+        let blocks = component
+            .data
+            .get("blocks")
+            .and_then(|b| b.get("RootDailyNote_notes"))
+            .and_then(|b| b.as_array());
+
+        match blocks {
+            Some(blocks) => blocks_to_markdown(blocks),
+            None => String::new(),
+        }
+    }
+
+    /// Update a daily note's blocks via /content/syncing.
+    pub fn sync_daily_note(
+        &self,
+        space_id: &str,
+        component: &Component,
+        new_blocks: Vec<Value>,
+    ) -> Result<String> {
+        let sync_client_id = Uuid::new_v4().to_string();
+        let now = now_iso();
+
+        let mut merged = serde_json::to_value(component)?;
+        merged["lastUpdated"] = json!(now);
+
+        // Replace the blocks
+        if merged["data"]["blocks"].is_object() {
+            merged["data"]["blocks"]["RootDailyNote_notes"] = json!(new_blocks);
+        } else {
+            merged["data"]["blocks"] = json!({ "RootDailyNote_notes": new_blocks });
+        }
+
+        let res = portal_fetch(
+            &self.client,
+            "POST",
+            "/content/syncing",
+            &self.token,
+            Some(json!({
+                "syncClientId": sync_client_id,
+                "elements": [{ "spaceId": space_id, "content": merged }]
+            })),
+        )?;
+
+        Ok(extract_sync_status(&res))
+    }
+
     /// Create a task (RootTask) using dynamic property handling.
     /// Properties (status, priority, etc.) are resolved from the RootTask structure definition.
     pub fn save_task(
@@ -1534,4 +1619,331 @@ fn create_entity_link(target_id: &str, property_id: &str, to_structure_id: &str)
             "createdAt": now_iso()
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+
+    // --- extract_sync_status ---
+
+    #[test]
+    fn extract_sync_status_success() {
+        let res = json!({"componentReturnObjects": [{"id": "x", "status": "success"}]});
+        assert_eq!(extract_sync_status(&res), "success");
+    }
+
+    #[test]
+    fn extract_sync_status_unknown_on_empty() {
+        let res = json!({"componentReturnObjects": []});
+        assert_eq!(extract_sync_status(&res), "unknown");
+    }
+
+    #[test]
+    fn extract_sync_status_missing_field() {
+        let res = json!({"other": "data"});
+        assert_eq!(extract_sync_status(&res), "unknown");
+    }
+
+    #[test]
+    fn extract_sync_status_null() {
+        let res = json!(null);
+        assert_eq!(extract_sync_status(&res), "unknown");
+    }
+
+    // --- collect_entity_ids ---
+
+    #[test]
+    fn collect_entity_ids_array_strings() {
+        let val = json!(["id1", "id2"]);
+        let mut ids = HashSet::new();
+        collect_entity_ids(&val, &mut ids);
+        assert!(ids.contains("id1"));
+        assert!(ids.contains("id2"));
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[test]
+    fn collect_entity_ids_array_objects() {
+        let val = json!([{"id": "a"}, {"id": "b"}]);
+        let mut ids = HashSet::new();
+        collect_entity_ids(&val, &mut ids);
+        assert!(ids.contains("a"));
+        assert!(ids.contains("b"));
+    }
+
+    #[test]
+    fn collect_entity_ids_single_string() {
+        let val = json!("single-id");
+        let mut ids = HashSet::new();
+        collect_entity_ids(&val, &mut ids);
+        assert!(ids.contains("single-id"));
+    }
+
+    #[test]
+    fn collect_entity_ids_empty_string() {
+        let val = json!("");
+        let mut ids = HashSet::new();
+        collect_entity_ids(&val, &mut ids);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn collect_entity_ids_empty_array() {
+        let val = json!([]);
+        let mut ids = HashSet::new();
+        collect_entity_ids(&val, &mut ids);
+        assert!(ids.is_empty());
+    }
+
+    // --- resolve_entity_val ---
+
+    #[test]
+    fn resolve_entity_val_array_mapped() {
+        let val = json!(["id1", "id2"]);
+        let mut map = HashMap::new();
+        map.insert("id1".to_string(), "Title 1".to_string());
+        map.insert("id2".to_string(), "Title 2".to_string());
+        let result = resolve_entity_val(&val, &map);
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr[0]["title"], "Title 1");
+        assert_eq!(arr[1]["title"], "Title 2");
+    }
+
+    #[test]
+    fn resolve_entity_val_array_unmapped() {
+        let val = json!(["unknown-id"]);
+        let map = HashMap::new();
+        let result = resolve_entity_val(&val, &map);
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr[0]["id"], "unknown-id");
+        assert_eq!(arr[0]["title"], "unknown-id");
+    }
+
+    #[test]
+    fn resolve_entity_val_single_string() {
+        let val = json!("id1");
+        let mut map = HashMap::new();
+        map.insert("id1".to_string(), "Title".to_string());
+        let result = resolve_entity_val(&val, &map);
+        assert_eq!(result["id"], "id1");
+        assert_eq!(result["title"], "Title");
+    }
+
+    #[test]
+    fn resolve_entity_val_empty_string() {
+        let val = json!("");
+        let map = HashMap::new();
+        assert!(resolve_entity_val(&val, &map).is_null());
+    }
+
+    #[test]
+    fn resolve_entity_val_null() {
+        let val = json!(null);
+        let map = HashMap::new();
+        assert!(resolve_entity_val(&val, &map).is_null());
+    }
+
+    // --- is_empty_val ---
+
+    #[test]
+    fn is_empty_val_null() {
+        assert!(is_empty_val(&json!(null)));
+    }
+
+    #[test]
+    fn is_empty_val_empty_array() {
+        assert!(is_empty_val(&json!([])));
+    }
+
+    #[test]
+    fn is_empty_val_non_empty_array() {
+        assert!(!is_empty_val(&json!([1])));
+    }
+
+    #[test]
+    fn is_empty_val_string() {
+        assert!(!is_empty_val(&json!("hello")));
+    }
+
+    // --- resolve_prop_key ---
+
+    fn make_prop_def(id: &str, name: &str, data_type: &str) -> RawPropertyDefinition {
+        RawPropertyDefinition {
+            id: id.to_string(),
+            data_type: data_type.to_string(),
+            name: Some(ValWrapper {
+                val: name.to_string(),
+            }),
+            description: None,
+            icon: None,
+            read_only: false,
+            prop_type: String::new(),
+            is_array: None,
+            allowed_structures: None,
+            set: None,
+            mode: None,
+            constraints: None,
+        }
+    }
+
+    #[test]
+    fn resolve_prop_key_by_uuid() {
+        let def = make_prop_def("550e8400-e29b-41d4-a716-446655440000", "Status", "label");
+        let defs = vec![def];
+        let name_map: HashMap<String, &RawPropertyDefinition> = defs
+            .iter()
+            .filter_map(|d| d.name.as_ref().map(|n| (n.val.to_lowercase(), d)))
+            .collect();
+        let (id, found) =
+            resolve_prop_key("550e8400-e29b-41d4-a716-446655440000", &defs, &name_map);
+        assert_eq!(id, "550e8400-e29b-41d4-a716-446655440000");
+        assert!(found.is_some());
+    }
+
+    #[test]
+    fn resolve_prop_key_by_name_case_insensitive() {
+        let def = make_prop_def("prop-uuid", "Status", "label");
+        let defs = vec![def];
+        let name_map: HashMap<String, &RawPropertyDefinition> = defs
+            .iter()
+            .filter_map(|d| d.name.as_ref().map(|n| (n.val.to_lowercase(), d)))
+            .collect();
+        let (id, found) = resolve_prop_key("STATUS", &defs, &name_map);
+        assert_eq!(id, "prop-uuid");
+        assert!(found.is_some());
+    }
+
+    #[test]
+    fn resolve_prop_key_unknown() {
+        let defs: Vec<RawPropertyDefinition> = vec![];
+        let name_map: HashMap<String, &RawPropertyDefinition> = HashMap::new();
+        let (id, found) = resolve_prop_key("unknown", &defs, &name_map);
+        assert_eq!(id, "unknown");
+        assert!(found.is_none());
+    }
+
+    // --- normalize_property ---
+
+    #[test]
+    fn normalize_property_label_string_match() {
+        let mut def = make_prop_def("status", "Status", "label");
+        def.set = Some(vec![
+            LabelOption {
+                id: "opt-1".to_string(),
+                text: "Done".to_string(),
+                color: "green".to_string(),
+            },
+            LabelOption {
+                id: "opt-2".to_string(),
+                text: "Todo".to_string(),
+                color: "red".to_string(),
+            },
+        ]);
+        let mut blocks = HashMap::new();
+        let result = normalize_property(&def, "status", &json!("done"), &mut blocks);
+        let val = result.get("status").unwrap();
+        let arr = val["val"].as_array().unwrap();
+        assert_eq!(arr[0], "opt-1");
+    }
+
+    #[test]
+    fn normalize_property_label_array() {
+        let mut def = make_prop_def("status", "Status", "label");
+        def.set = Some(vec![]);
+        let mut blocks = HashMap::new();
+        let result = normalize_property(&def, "status", &json!(["a", "b"]), &mut blocks);
+        let val = result.get("status").unwrap();
+        assert_eq!(val["val"], json!(["a", "b"]));
+    }
+
+    #[test]
+    fn normalize_property_datetime_date_only() {
+        let def = make_prop_def("due", "Due", "datetime");
+        let mut blocks = HashMap::new();
+        let result = normalize_property(&def, "due", &json!("2026-03-23"), &mut blocks);
+        let val = result.get("due").unwrap();
+        assert_eq!(val["val"]["dateResolution"], "day");
+        assert_eq!(val["val"]["startTime"], "2026-03-23T00:00:00.000Z");
+    }
+
+    #[test]
+    fn normalize_property_datetime_full_iso() {
+        let def = make_prop_def("due", "Due", "datetime");
+        let mut blocks = HashMap::new();
+        let result = normalize_property(&def, "due", &json!("2026-03-23T10:00:00Z"), &mut blocks);
+        let val = result.get("due").unwrap();
+        assert_eq!(val["val"]["dateResolution"], "time");
+        assert_eq!(val["val"]["startTime"], "2026-03-23T10:00:00Z");
+    }
+
+    #[test]
+    fn normalize_property_entity() {
+        let mut def = make_prop_def("related", "Related", "entity");
+        def.allowed_structures = Some(vec!["StructA".to_string()]);
+        let mut blocks = HashMap::new();
+        let result = normalize_property(&def, "related", &json!("target-id"), &mut blocks);
+        let val = result.get("related").unwrap();
+        let arr = val["val"].as_array().unwrap();
+        assert_eq!(arr[0]["id"], "target-id");
+        assert!(arr[0]["link"].is_object());
+    }
+
+    #[test]
+    fn normalize_property_blocks() {
+        let def = make_prop_def("notes", "Notes", "blocks");
+        let mut blocks = HashMap::new();
+        let result = normalize_property(&def, "notes", &json!("# Hello\nWorld"), &mut blocks);
+        assert!(blocks.contains_key("notes"));
+        assert!(!blocks["notes"].is_empty());
+        let val = result.get("notes").unwrap();
+        assert_eq!(val["val"], "notes");
+    }
+
+    #[test]
+    fn normalize_property_string_passthrough() {
+        let def = make_prop_def("url", "URL", "string");
+        let mut blocks = HashMap::new();
+        let result = normalize_property(&def, "url", &json!("https://example.com"), &mut blocks);
+        let val = result.get("url").unwrap();
+        assert_eq!(val["val"], "https://example.com");
+    }
+
+    // --- parse_date_to_inline ---
+
+    #[test]
+    fn parse_date_to_inline_date_only() {
+        let (time, res) = parse_date_to_inline("2026-03-23");
+        assert_eq!(time, "2026-03-23T00:00:00.000Z");
+        assert_eq!(res, "day");
+    }
+
+    #[test]
+    fn parse_date_to_inline_full_iso_with_z() {
+        let (time, res) = parse_date_to_inline("2026-03-23T10:00:00Z");
+        assert_eq!(time, "2026-03-23T10:00:00Z");
+        assert_eq!(res, "time");
+    }
+
+    #[test]
+    fn parse_date_to_inline_iso_without_z() {
+        let (time, res) = parse_date_to_inline("2026-03-23T10:00:00");
+        assert_eq!(time, "2026-03-23T10:00:00Z");
+        assert_eq!(res, "time");
+    }
+
+    // --- create_entity_link ---
+
+    #[test]
+    fn create_entity_link_structure() {
+        let link = create_entity_link("target-123", "prop-1", "StructA");
+        assert_eq!(link["id"], "target-123");
+        assert_eq!(link["link"]["type"], "Dependency");
+        assert_eq!(link["link"]["data"]["propertyId"], "prop-1");
+        assert_eq!(link["link"]["data"]["toStructureId"], "StructA");
+        assert!(link["link"]["id"].as_str().is_some());
+        assert!(link["link"]["createdAt"].as_str().is_some());
+    }
 }
