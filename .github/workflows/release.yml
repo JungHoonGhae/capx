@@ -82,6 +82,7 @@ jobs:
 
   update-homebrew:
     needs: release
+    if: ${{ secrets.DOPPLER_TOKEN_GITHUB != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Install Doppler CLI
@@ -89,7 +90,12 @@ jobs:
       - name: Fetch Homebrew token
         id: doppler
         run: |
-          TOKEN=$(doppler secrets get HOMEBREW_TAP_TOKEN --plain)
+          set -euo pipefail
+          TOKEN=$(doppler secrets get HOMEBREW_TAP_TOKEN --plain 2>/dev/null)
+          if [ -z "$TOKEN" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN not found in Doppler"
+            exit 1
+          fi
           echo "::add-mask::$TOKEN"
           echo "HOMEBREW_TAP_TOKEN=$TOKEN" >> "$GITHUB_OUTPUT"
         env:
