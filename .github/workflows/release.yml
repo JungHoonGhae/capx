@@ -79,6 +79,7 @@ jobs:
 
   update-homebrew:
     needs: release
+    if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -90,6 +91,7 @@ jobs:
       - name: Read checksums
         id: checksums
         run: |
+          cat *.sha256 > SHA256SUMS.txt
           echo "aarch64_apple=$(grep aarch64-apple-darwin SHA256SUMS.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "x86_64_apple=$(grep x86_64-apple-darwin SHA256SUMS.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "x86_64_linux=$(grep x86_64-unknown-linux-gnu SHA256SUMS.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"

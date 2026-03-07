@@ -1,0 +1,49 @@
+name: Update Homebrew Formula
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.1)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  update-homebrew:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version
+        id: version
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ inputs.tag }}
+
+      - name: Download release checksums
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "SHA256SUMS.txt"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+
+      - name: Read checksums
+        id: checksums
+        run: |
+          echo "aarch64_apple=$(grep aarch64-apple-darwin SHA256SUMS.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "x86_64_apple=$(grep x86_64-apple-darwin SHA256SUMS.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "x86_64_linux=$(grep x86_64-unknown-linux-gnu SHA256SUMS.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch to homebrew-capx
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: JungHoonGhae/homebrew-capx
+          event-type: update-formula
+          client-payload: |
+            {
+              "version": "${{ steps.version.outputs.version }}",
+              "aarch64_apple_sha256": "${{ steps.checksums.outputs.aarch64_apple }}",
+              "x86_64_apple_sha256": "${{ steps.checksums.outputs.x86_64_apple }}",
+              "x86_64_linux_sha256": "${{ steps.checksums.outputs.x86_64_linux }}"
+            }
