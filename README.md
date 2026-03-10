@@ -1,18 +1,18 @@
-# capx
+# capacities-cli
 
-[![Crates.io](https://img.shields.io/crates/v/capx.svg)](https://crates.io/crates/capx)
-[![GitHub stars](https://img.shields.io/github/stars/JungHoonGhae/capx)](https://github.com/JungHoonGhae/capx/stargazers)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/JungHoonGhae/capx/blob/main/LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/capacities-cli.svg)](https://crates.io/crates/capacities-cli)
+[![GitHub stars](https://img.shields.io/github/stars/JungHoonGhae/capacities-cli)](https://github.com/JungHoonGhae/capacities-cli/stargazers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/JungHoonGhae/capacities-cli/blob/main/LICENSE)
 
 | [<img alt="GitHub Follow" src="https://img.shields.io/github/followers/JungHoonGhae?style=flat-square&logo=github&labelColor=black&color=24292f" width="156px" />](https://github.com/JungHoonGhae) | Follow [@JungHoonGhae](https://github.com/JungHoonGhae) on GitHub for more projects. |
 | :-----| :----- |
 | [<img alt="X link" src="https://img.shields.io/badge/Follow-%40lucas_ghae-000000?style=flat-square&logo=x&labelColor=black" width="156px" />](https://x.com/lucas_ghae) | Follow [@lucas_ghae](https://x.com/lucas_ghae) on X for updates. |
 
-Unofficial CLI for [Capacities.io](https://capacities.io) — the first tool that gives you **full read/write access** to your Capacities data from the terminal.
+Unofficial CLI for [Capacities.io](https://capacities.io) — the first tool that gives you **full read/write access** to your Capacities data from the terminal. The CLI command is `capx`.
 
 > **Disclaimer**: This is an independent community CLI tool. It is not affiliated with, endorsed by, or sponsored by Capacities. Capacities is a trademark of its respective owners.
 
-## Why capx?
+## Why capacities-cli?
 
 ### The problem: Capacities has no real API
 
@@ -39,9 +39,9 @@ Community tools and MCP servers built on the official API inherit every limitati
 - **Requires Pro subscription** — The official API is paywalled
 - **Strict rate limits** — 5 requests per 60 seconds on most endpoints
 
-### capx solves this
+### capacities-cli solves this
 
-**capx** uses the same internal Portal API that the Capacities desktop app uses. This gives you full access to everything the app can do:
+**capacities-cli** uses the same internal Portal API that the Capacities desktop app uses. This gives you full access to everything the app can do:
 
 | capx | Official API | MCP Servers |
 |:----:|:------------:|:-----------:|
@@ -86,7 +86,7 @@ If this tool helps you, consider supporting its maintenance:
 
 | Requirement | Version/Notes |
 |-------------|---------------|
-| Capacities Desktop App | macOS — logged in (token auto-extracted from cookies) |
+| Capacities Desktop App | macOS, Linux, or Windows — logged in (token auto-extracted from cookies) |
 | Rust | >= 1.70 (if building from source) |
 
 ## Installation
@@ -94,7 +94,7 @@ If this tool helps you, consider supporting its maintenance:
 ### Homebrew (macOS & Linux)
 
 ```sh
-brew tap JungHoonGhae/capx
+brew tap JungHoonGhae/capacities-cli
 brew install capx
 ```
 
@@ -103,12 +103,12 @@ brew install capx
 ### Cargo
 
 ```sh
-cargo install capx
+cargo install capacities-cli
 ```
 
 ### Binary
 
-Download from [GitHub Releases](https://github.com/JungHoonGhae/capx/releases).
+Download from [GitHub Releases](https://github.com/JungHoonGhae/capacities-cli/releases).
 
 ## Quick Start
 
@@ -182,6 +182,23 @@ capx create Page "Title" -p status=draft       # With properties
 capx task "Review" --context "Project Name"    # Task with context
 ```
 
+### Export & Edit
+
+```sh
+capx export                              # Export all objects as markdown to stdout
+capx export -t Page --format json        # Export Pages as JSON
+capx export -o ./backup                  # Export to directory
+capx edit <uuid>                         # Edit object in $EDITOR
+```
+
+### Diagnostics
+
+```sh
+capx auth                                # Check authentication status
+capx doctor                              # Check API connection, auth, and config
+capx completions bash                    # Generate shell completions (bash/zsh/fish)
+```
+
 ### Global Options
 
 | Flag | Description |
@@ -189,13 +206,51 @@ capx task "Review" --context "Project Name"    # Task with context
 | `--json` | Output as JSON |
 | `--space-id <UUID>` | Override space (or set `CAP_SPACE_ID`) |
 | `--token <TOKEN>` | Override token (or set `CAP_TOKEN`) |
+| `--appversion <VER>` | Override Portal API app version (or set `CAP_APPVERSION`) |
+| `--portal-url <URL>` | Override Portal API base URL (or set `CAP_PORTAL_URL`) |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `CAP_TOKEN` | Auth token (alternative to `--token` or auto-detection) |
+| `CAP_SPACE_ID` | Default space UUID (alternative to `--space-id`) |
+| `CAP_APPVERSION` | Portal API app version override (e.g., `electron-1.58.42-1`) |
+| `CAP_PORTAL_URL` | Portal API base URL override |
+
+## Troubleshooting
+
+### Token expired or invalid
+
+If you get "Authentication failed (401)", your token may have expired. Re-login to the Capacities desktop app, or manually set `CAP_TOKEN`.
+
+### API version mismatch
+
+If capx suddenly stops working after a Capacities update, the internal API version may have changed. Set `CAP_APPVERSION` to match the version used by your Capacities desktop app. Check the app's network requests to find the current `appversion` header value.
+
+### Linux/Windows auto-auth
+
+Auto-auth reads the Capacities desktop app's cookie database. On Linux, it looks at `~/.config/Capacities/Cookies`. On Windows, at `%APPDATA%\Capacities\Cookies`. If auto-detection fails, set `CAP_TOKEN` manually.
+
+### Scripting examples
+
+```sh
+# Export all pages as JSON and pipe to jq
+capx export -t Page --format json --json | jq '.[].title'
+
+# Create a page from a file
+capx create Page "Notes" -b "$(cat notes.md)"
+
+# Daily note automation
+echo "$(date +%H:%M) — Standup done" | xargs -I{} capx daily "{}"
+```
 
 ## Documentation
 
 | Resource | Link |
 |----------|------|
-| Crates.io | [crates.io/crates/capx](https://crates.io/crates/capx) |
-| GitHub | [github.com/JungHoonGhae/capx](https://github.com/JungHoonGhae/capx) |
+| Crates.io | [crates.io/crates/capacities-cli](https://crates.io/crates/capacities-cli) |
+| GitHub | [github.com/JungHoonGhae/capacities-cli](https://github.com/JungHoonGhae/capacities-cli) |
 | Capacities API | [docs.capacities.io](https://docs.capacities.io) |
 
 ## Contributing
@@ -204,4 +259,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-MIT — See [LICENSE](https://github.com/JungHoonGhae/capx/blob/main/LICENSE) for details.
+MIT — See [LICENSE](https://github.com/JungHoonGhae/capacities-cli/blob/main/LICENSE) for details.

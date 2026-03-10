@@ -1,11 +1,12 @@
 mod api;
 mod auth;
 mod blocks;
+mod error;
 mod format;
 mod types;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::collections::HashMap;
 
 #[derive(Parser)]
@@ -25,6 +26,14 @@ struct Cli {
     /// Auth token (or set CAP_TOKEN env)
     #[arg(long, global = true)]
     token: Option<String>,
+
+    /// Portal API app version (or set CAP_APPVERSION env)
+    #[arg(long, global = true)]
+    appversion: Option<String>,
+
+    /// Portal API base URL (or set CAP_PORTAL_URL env)
+    #[arg(long, global = true)]
+    portal_url: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -171,6 +180,37 @@ enum Commands {
         id: String,
         /// Context: entity UUIDs or search terms
         entities: Vec<String>,
+    },
+
+    /// Export objects from space
+    Export {
+        /// Filter by type name
+        #[arg(long, short)]
+        r#type: Option<Vec<String>>,
+        /// Output format: md or json
+        #[arg(long, short, default_value = "md")]
+        format: String,
+        /// Output directory (default: stdout)
+        #[arg(long, short)]
+        output_dir: Option<String>,
+    },
+
+    /// Check API connection and auth status
+    Doctor,
+
+    /// Check authentication status and validate token
+    Auth,
+
+    /// Edit an object interactively in $EDITOR
+    Edit {
+        /// Object UUID
+        id: String,
+    },
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate for (bash, zsh, fish)
+        shell: clap_complete::Shell,
     },
 }
 
@@ -356,7 +396,17 @@ fn main() -> Result<()> {
         auth::get_token()?
     };
 
-    let api = api::Api::new(token);
+    let appversion = cli.appversion.clone().or_else(|| {
+        std::env::var("CAP_APPVERSION")
+            .ok()
+            .filter(|s| !s.is_empty())
+    });
+    let portal_url = cli.portal_url.clone().or_else(|| {
+        std::env::var("CAP_PORTAL_URL")
+            .ok()
+            .filter(|s| !s.is_empty())
+    });
+    let api = api::Api::new(token, appversion, portal_url);
     let json_mode = cli.json;
 
     match &cli.command {
@@ -837,6 +887,234 @@ fn main() -> Result<()> {
             } else {
                 format::print_status("Context added", &status);
             }
+        }
+
+        Commands::Export {
+            r#type,
+            format: fmt,
+            output_dir,
+        } => {
+            let space_id = get_space_id(&cli, &api)?;
+            let filter = r#type.as_deref();
+            let summary = api.get_space_objects_summary(&space_id, filter)?;
+
+            if summary.elements.is_empty() {
+                if json_mode {
+                    format::print_json(&serde_json::json!([]));
+                } else {
+                    eprintln!("No objects to export.");
+                }
+                return Ok(());
+            }
+
+            let ids: Vec<String> = summary.elements.iter().map(|e| e.id.clone()).collect();
+            let objects = api.get_formatted_objects(&ids)?;
+
+            if let Some(dir) = output_dir {
+                std::fs::create_dir_all(dir)?;
+                for obj in &objects {
+                    let safe_title: String = obj
+                        .title
+                        .chars()
+                        .map(|c| {
+                            if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                                c
+                            } else {
+                                '_'
+                            }
+                        })
+                        .collect();
+                    let ext = if fmt == "json" { "json" } else { "md" };
+                    let filename = format!("{safe_title}.{ext}");
+                    let path = std::path::Path::new(&dir).join(&filename);
+
+                    if fmt == "json" {
+                        let content = serde_json::to_string_pretty(obj)?;
+                        std::fs::write(&path, content)?;
+                    } else {
+                        let mut content = format!("# {}\n\n", obj.title);
+                        if let Some(desc) = &obj.description {
+                            if !desc.is_empty() {
+                                content.push_str(&format!("> {desc}\n\n"));
+                            }
+                        }
+                        content.push_str(&obj.body);
+                        std::fs::write(&path, content)?;
+                    }
+                }
+                eprintln!("Exported {} objects to {dir}/", objects.len());
+            } else if fmt == "json" || json_mode {
+                format::print_json(&objects);
+            } else {
+                for (i, obj) in objects.iter().enumerate() {
+                    if i > 0 {
+                        println!("{}", "─".repeat(60));
+                    }
+                    println!("# {}", obj.title);
+                    if let Some(desc) = &obj.description {
+                        if !desc.is_empty() {
+                            println!("> {desc}");
+                        }
+                    }
+                    println!();
+                    println!("{}", obj.body);
+                    println!();
+                }
+            }
+        }
+
+        Commands::Doctor => {
+            eprintln!("Checking capx configuration...");
+            eprintln!();
+
+            // Check auth
+            eprint!("  Auth:       ");
+            match api.get_user() {
+                Ok(user) => eprintln!("OK ({})", user.email),
+                Err(e) => eprintln!("FAIL ({})", e),
+            }
+
+            // Check spaces
+            eprint!("  Spaces:     ");
+            match api.get_spaces() {
+                Ok(data) => eprintln!("OK ({} spaces)", data.spaces.len()),
+                Err(e) => eprintln!("FAIL ({})", e),
+            }
+
+            // Check appversion
+            eprintln!("  Appversion: {}", api.appversion());
+            eprintln!("  Portal URL: {}", api.portal_url());
+
+            // Check space access
+            eprint!("  Space:      ");
+            match get_space_id(&cli, &api) {
+                Ok(id) => match api.get_structures(&id) {
+                    Ok(structures) => {
+                        eprintln!("OK ({} types in {})", structures.len(), id);
+                    }
+                    Err(e) => eprintln!("FAIL ({})", e),
+                },
+                Err(e) => eprintln!("FAIL ({})", e),
+            }
+            eprintln!();
+            eprintln!("Done.");
+        }
+
+        Commands::Auth => match api.get_user() {
+            Ok(user) => {
+                if json_mode {
+                    format::print_json(&serde_json::json!({
+                        "authenticated": true,
+                        "id": user.id,
+                        "email": user.email,
+                    }));
+                } else {
+                    format::print_status("Authenticated", &user.email);
+                }
+            }
+            Err(e) => {
+                if json_mode {
+                    format::print_json(&serde_json::json!({
+                        "authenticated": false,
+                        "error": e.to_string(),
+                    }));
+                } else {
+                    anyhow::bail!("Authentication failed: {e}");
+                }
+            }
+        },
+
+        Commands::Edit { id } => {
+            let space_id = get_space_id(&cli, &api)?;
+
+            // Fetch current object
+            let objects = api.get_formatted_objects(std::slice::from_ref(id))?;
+            let obj = objects
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("Object {id} not found"))?;
+
+            // Write to temp file
+            let mut md = format!("# {}\n\n", obj.title);
+            if let Some(desc) = &obj.description {
+                if !desc.is_empty() {
+                    md.push_str(&format!("> {desc}\n\n"));
+                }
+            }
+            md.push_str(&obj.body);
+
+            let tmp_path = std::env::temp_dir().join(format!("capx-edit-{id}.md"));
+            std::fs::write(&tmp_path, &md)?;
+
+            // Open in editor
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+            let status = std::process::Command::new(&editor)
+                .arg(&tmp_path)
+                .status()?;
+
+            if !status.success() {
+                let _ = std::fs::remove_file(&tmp_path);
+                anyhow::bail!("Editor exited with non-zero status");
+            }
+
+            // Read back and check for changes
+            let new_md = std::fs::read_to_string(&tmp_path)?;
+            let _ = std::fs::remove_file(&tmp_path);
+
+            if new_md == md {
+                if json_mode {
+                    format::print_json(&serde_json::json!({ "status": "no_changes" }));
+                } else {
+                    println!("  No changes detected.");
+                }
+                return Ok(());
+            }
+
+            // Parse the edited markdown: extract title from first heading, description from blockquote
+            let mut new_title: Option<String> = None;
+            let mut new_desc: Option<String> = None;
+            let mut body_lines = Vec::new();
+            let mut past_header = false;
+
+            for line in new_md.lines() {
+                if !past_header {
+                    if let Some(t) = line.strip_prefix("# ") {
+                        new_title = Some(t.to_string());
+                        continue;
+                    }
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Some(d) = line.strip_prefix("> ") {
+                        if new_desc.is_none() {
+                            new_desc = Some(d.to_string());
+                            continue;
+                        }
+                    }
+                    past_header = true;
+                }
+                body_lines.push(line);
+            }
+
+            let new_body = body_lines.join("\n");
+            let update_status = api.update_object(
+                &space_id,
+                id,
+                new_title.as_deref(),
+                new_desc.as_deref(),
+                Some(&new_body),
+                None,
+            )?;
+
+            if json_mode {
+                format::print_json(&serde_json::json!({ "id": id, "status": update_status }));
+            } else {
+                format::print_status("Updated", &update_status);
+            }
+        }
+
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(*shell, &mut cmd, "capx", &mut std::io::stdout());
         }
     }
 

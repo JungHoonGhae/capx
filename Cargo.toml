@@ -1,11 +1,11 @@
 [package]
-name = "capx"
-version = "0.1.1"
+name = "capacities-cli"
+version = "0.2.0"
 edition = "2021"
 description = "Unofficial CLI for Capacities.io"
 license = "MIT"
-repository = "https://github.com/JungHoonGhae/capx"
-homepage = "https://github.com/JungHoonGhae/capx"
+repository = "https://github.com/JungHoonGhae/capacities-cli"
+homepage = "https://github.com/JungHoonGhae/capacities-cli"
 readme = "README.md"
 keywords = ["capacities", "cli", "productivity", "note-taking"]
 categories = ["command-line-utilities"]
@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

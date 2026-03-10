@@ -4,6 +4,7 @@ use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
+use std::time::Duration;
 use uuid::Uuid;
 
 static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -19,77 +20,121 @@ fn now_iso() -> String {
         .to_string()
 }
 
-const PORTAL_URL: &str = "https://portal.capacities.io";
+const DEFAULT_PORTAL_URL: &str = "https://portal.capacities.io";
+const DEFAULT_APPVERSION: &str = "electron-1.58.42-1";
 
-fn portal_fetch(
-    client: &Client,
-    method: &str,
-    path: &str,
-    token: &str,
-    body: Option<Value>,
-) -> Result<Value> {
-    let url = format!("{PORTAL_URL}{path}");
-    let mut req = match method {
-        "GET" => client.get(&url),
-        "POST" => client.post(&url),
-        _ => client.post(&url),
-    };
-
-    req = req
-        .header("Content-Type", "application/json")
-        .header("auth-token", token)
-        .header("appversion", "electron-1.58.42-1");
-
-    if let Some(b) = body {
-        req = req.json(&b);
-    }
-
-    let res = req.send().context("Failed to send request to Portal API")?;
-    let status = res.status();
-    if !status.is_success() {
-        let text = res.text().unwrap_or_default();
-        bail!("Portal API error {status}: {text}");
-    }
-
-    let text = res.text().unwrap_or_default();
-    if text.is_empty() {
-        Ok(Value::Null)
-    } else {
-        serde_json::from_str(&text).context("Failed to parse API response")
+fn format_api_error(status: reqwest::StatusCode, body: &str) -> String {
+    match status.as_u16() {
+        401 => format!("Authentication failed (401). Your token may have expired. {body}"),
+        403 => format!("Access denied (403). Check your space permissions. {body}"),
+        429 => format!("Rate limited (429). Please try again later. {body}"),
+        s if (500..600).contains(&s) => {
+            format!("Capacities server error ({s}). Please try again later. {body}")
+        }
+        _ => format!("Portal API error {status}: {body}"),
     }
 }
 
 pub struct Api {
     client: Client,
     token: String,
+    appversion: String,
+    portal_url: String,
 }
 
 impl Api {
-    pub fn new(token: String) -> Self {
+    pub fn new(token: String, appversion: Option<String>, portal_url: Option<String>) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
-            client: Client::new(),
+            client,
             token,
+            appversion: appversion.unwrap_or_else(|| DEFAULT_APPVERSION.to_string()),
+            portal_url: portal_url.unwrap_or_else(|| DEFAULT_PORTAL_URL.to_string()),
+        }
+    }
+
+    pub fn appversion(&self) -> &str {
+        &self.appversion
+    }
+
+    pub fn portal_url(&self) -> &str {
+        &self.portal_url
+    }
+
+    fn portal_fetch(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value> {
+        let url = format!("{}{path}", self.portal_url);
+
+        let do_request = || -> Result<reqwest::blocking::Response> {
+            let mut req = match method {
+                "GET" => self.client.get(&url),
+                "POST" => self.client.post(&url),
+                _ => self.client.post(&url),
+            };
+
+            req = req
+                .header("Content-Type", "application/json")
+                .header("auth-token", &self.token)
+                .header("appversion", &self.appversion);
+
+            if let Some(ref b) = body {
+                req = req.json(b);
+            }
+
+            req.send().context("Failed to send request to Portal API")
+        };
+
+        let res = do_request()?;
+        let status = res.status();
+
+        // Retry once on 429 or 5xx
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+            std::thread::sleep(Duration::from_secs(1));
+            let res = do_request()?;
+            let status = res.status();
+            if !status.is_success() {
+                let text = res.text().unwrap_or_default();
+                bail!("{}", format_api_error(status, &text));
+            }
+            let text = res.text().unwrap_or_default();
+            if text.is_empty() {
+                return Ok(Value::Null);
+            }
+            return serde_json::from_str(&text).context("Failed to parse API response");
+        }
+
+        if !status.is_success() {
+            let text = res.text().unwrap_or_default();
+            bail!("{}", format_api_error(status, &text));
+        }
+
+        let text = res.text().unwrap_or_default();
+        if text.is_empty() {
+            Ok(Value::Null)
+        } else {
+            serde_json::from_str(&text).context("Failed to parse API response")
         }
     }
 
     // --- Basics ---
 
     pub fn get_spaces(&self) -> Result<SpacesResponse> {
-        let val = portal_fetch(&self.client, "GET", "/basics/spaces", &self.token, None)?;
+        let val = self.portal_fetch("GET", "/basics/spaces", None)?;
         Ok(serde_json::from_value(val)?)
     }
 
     pub fn get_user(&self) -> Result<UserInfo> {
-        let val = portal_fetch(&self.client, "GET", "/user", &self.token, None)?;
+        let val = self.portal_fetch("GET", "/user", None)?;
         Ok(serde_json::from_value(val)?)
     }
 
     pub fn lookup(&self, query: &str, space_id: &str) -> Result<SearchResponse> {
-        let val = portal_fetch(
-            &self.client,
+        let val = self.portal_fetch(
             "POST",
             "/basics/lookup",
-            &self.token,
             Some(json!({ "searchTerm": query, "spaceId": space_id })),
         )?;
         Ok(serde_json::from_value(val)?)
@@ -117,13 +162,7 @@ impl Api {
         if let Some(m) = md_text {
             body["mdText"] = json!(m);
         }
-        portal_fetch(
-            &self.client,
-            "POST",
-            "/basics/save-weblink",
-            &self.token,
-            Some(body),
-        )
+        self.portal_fetch("POST", "/basics/save-weblink", Some(body))
     }
 
     pub fn save_to_daily_note(
@@ -136,13 +175,7 @@ impl Api {
         if no_timestamp {
             body["noTimeStamp"] = json!(true);
         }
-        portal_fetch(
-            &self.client,
-            "POST",
-            "/basics/save-to-daily-note",
-            &self.token,
-            Some(body),
-        )?;
+        self.portal_fetch("POST", "/basics/save-to-daily-note", Some(body))?;
         Ok(())
     }
 
@@ -217,11 +250,9 @@ impl Api {
             merged["data"]["blocks"] = json!({ "RootDailyNote_notes": new_blocks });
         }
 
-        let res = portal_fetch(
-            &self.client,
+        let res = self.portal_fetch(
             "POST",
             "/content/syncing",
-            &self.token,
             Some(json!({
                 "syncClientId": sync_client_id,
                 "elements": [{ "spaceId": space_id, "content": merged }]
@@ -363,11 +394,9 @@ impl Api {
 
         let elements = vec![json!({ "spaceId": space_id, "content": content })];
 
-        let res = portal_fetch(
-            &self.client,
+        let res = self.portal_fetch(
             "POST",
             "/content/syncing",
-            &self.token,
             Some(json!({
                 "syncClientId": sync_client_id,
                 "elements": elements
@@ -546,11 +575,9 @@ impl Api {
             return Ok("no_changes".to_string());
         }
 
-        let res = portal_fetch(
-            &self.client,
+        let res = self.portal_fetch(
             "POST",
             "/content/syncing",
-            &self.token,
             Some(json!({
                 "syncClientId": sync_client_id,
                 "elements": elements
@@ -577,54 +604,36 @@ impl Api {
     // --- Content ---
 
     pub fn get_space_content(&self, space_id: &str) -> Result<SpaceContentResponse> {
-        let val = portal_fetch(
-            &self.client,
+        let val = self.portal_fetch(
             "POST",
             "/content/space-content",
-            &self.token,
             Some(json!({ "spaceId": space_id })),
         )?;
         Ok(serde_json::from_value(val)?)
     }
 
     pub fn get_content_by_ids(&self, ids: &[String]) -> Result<ContentResponse> {
-        let val = portal_fetch(
-            &self.client,
-            "POST",
-            "/content/id-list",
-            &self.token,
-            Some(json!({ "ids": ids })),
-        )?;
+        let val = self.portal_fetch("POST", "/content/id-list", Some(json!({ "ids": ids })))?;
         Ok(serde_json::from_value(val)?)
     }
 
     pub fn get_content_trash(&self, space_id: &str) -> Result<Value> {
-        portal_fetch(
-            &self.client,
-            "GET",
-            &format!("/content/trash/{space_id}"),
-            &self.token,
-            None,
-        )
+        self.portal_fetch("GET", &format!("/content/trash/{space_id}"), None)
     }
 
     pub fn duplicate_content(&self, id: &str, space_id: &str) -> Result<Value> {
-        portal_fetch(
-            &self.client,
+        self.portal_fetch(
             "POST",
             "/content/duplicate",
-            &self.token,
             Some(json!({ "id": id, "spaceId": space_id })),
         )
     }
 
     pub fn undo_delete(&self, id: &str, space_id: &str) -> Result<Value> {
         let sync_client_id = Uuid::new_v4().to_string();
-        portal_fetch(
-            &self.client,
+        self.portal_fetch(
             "POST",
             "/content/undoDelete",
-            &self.token,
             Some(json!({ "id": id, "spaceId": space_id, "syncClientId": sync_client_id })),
         )
     }
@@ -1189,11 +1198,9 @@ impl Api {
 
         let elements = vec![json!({ "spaceId": space_id, "content": content })];
 
-        let res = portal_fetch(
-            &self.client,
+        let res = self.portal_fetch(
             "POST",
             "/content/syncing",
-            &self.token,
             Some(json!({
                 "syncClientId": sync_client_id,
                 "elements": elements
@@ -1243,8 +1250,7 @@ impl Api {
         }
 
         // Fetch structure definition once if needed for properties or body
-        let needs_struct =
-            (properties.is_some() && !properties.unwrap().is_empty()) || body_markdown.is_some();
+        let needs_struct = properties.is_some_and(|p| !p.is_empty()) || body_markdown.is_some();
         let prop_defs: Vec<RawPropertyDefinition> = if needs_struct {
             let struct_data =
                 self.get_content_by_ids(std::slice::from_ref(&component.structure_id))?;
@@ -1316,11 +1322,9 @@ impl Api {
 
         let elements = vec![json!({ "spaceId": space_id, "content": merged })];
 
-        let res = portal_fetch(
-            &self.client,
+        let res = self.portal_fetch(
             "POST",
             "/content/syncing",
-            &self.token,
             Some(json!({
                 "syncClientId": sync_client_id,
                 "elements": elements
@@ -1346,11 +1350,9 @@ impl Api {
         merged["lastUpdated"] = json!(now);
         merged["deleteRequested"] = json!(true);
 
-        let res = portal_fetch(
-            &self.client,
+        let res = self.portal_fetch(
             "POST",
             "/content/syncing",
-            &self.token,
             Some(json!({
                 "syncClientId": sync_client_id,
                 "elements": [{ "spaceId": space_id, "content": merged }]
@@ -1471,7 +1473,7 @@ fn resolve_entity_val(val: &Value, title_map: &HashMap<String, String>) -> Value
 }
 
 fn is_empty_val(v: &Value) -> bool {
-    v.is_null() || (v.is_array() && v.as_array().unwrap().is_empty())
+    v.is_null() || v.as_array().is_some_and(|a| a.is_empty())
 }
 
 fn resolve_prop_key<'a>(

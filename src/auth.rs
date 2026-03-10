@@ -3,9 +3,19 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-fn cookies_db_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_default();
-    home.join("Library/Application Support/Capacities/Cookies")
+fn cookies_db_path() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        let home = dirs::home_dir()?;
+        Some(home.join("Library/Application Support/Capacities/Cookies"))
+    } else if cfg!(target_os = "linux") {
+        let config = dirs::config_dir()?;
+        Some(config.join("Capacities/Cookies"))
+    } else if cfg!(target_os = "windows") {
+        let appdata = dirs::data_dir()?;
+        Some(appdata.join("Capacities/Cookies"))
+    } else {
+        None
+    }
 }
 
 pub fn get_token() -> Result<String> {
@@ -18,10 +28,15 @@ pub fn get_token() -> Result<String> {
 }
 
 fn extract_auth_token() -> Result<String> {
-    let db_path = cookies_db_path();
+    let db_path = cookies_db_path().ok_or_else(|| {
+        anyhow::anyhow!("Unsupported platform for auto-auth. Set CAP_TOKEN or use --token.")
+    })?;
+
     if !db_path.exists() {
         bail!(
-            "Capacities cookie database not found at {}. Is Capacities installed?",
+            "Capacities cookie database not found at {}.\n\
+             Is the Capacities desktop app installed and logged in?\n\
+             Alternatively, set CAP_TOKEN or use --token.",
             db_path.display()
         );
     }
