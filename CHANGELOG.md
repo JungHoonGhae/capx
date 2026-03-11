@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-03-10
+
+### Changed
+
+- Renamed project from `capx` to `capacities-cli` (crates.io name); CLI command remains `capx`
+- Repository moved to `JungHoonGhae/capacities-cli`
+
+### Added
+
+- New commands: `export`, `edit`, `doctor`, `auth`, `completions`
+- 7 new block types: checklist, bullet list, numbered list, quote, callout, toggle, image
+- Entity UUID preservation in wiki-links: `[[Name|uuid]]`
+- Structured error types (`CapxError`) with JSON serialization support (`--json` flag)
+- Cross-platform auth: macOS, Linux, and Windows cookie DB extraction
+- `--appversion` / `CAP_APPVERSION` and `--portal-url` / `CAP_PORTAL_URL` config overrides
+- 29 new unit tests for `blocks.rs` edge cases (141 total: 133 unit + 8 integration)
+- `cargo-audit` added to CI security checks
+
+### Fixed
+
+- Removed dangerous `unwrap()` calls in `api.rs`
+- Added 30-second request timeout
+- Automatic retry on HTTP 429 and 5xx responses
+- Improved API error messages with contextual endpoint details
+- CI: hardened Doppler token fetch, suppress stderr to prevent leakage
+- CI: skip Homebrew tap update when token is not configured
+
 ## [0.1.1] - 2026-03-07
 
 ### Added
@@ -43,5 +70,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `--space-id` and `--token` global overrides
 - Auto-detect first space when `CAP_SPACE_ID` is not set
 
+[0.2.0]: https://github.com/JungHoonGhae/capacities-cli/releases/tag/v0.2.0
 [0.1.1]: https://github.com/JungHoonGhae/capx/releases/tag/v0.1.1
 [0.1.0]: https://github.com/JungHoonGhae/capx/releases/tag/v0.1.0
